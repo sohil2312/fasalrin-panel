@@ -372,6 +372,116 @@
   .sub { display: none; }
   .tabs { margin: 0 auto; }
   .tab { padding: 6px 16px; white-space: nowrap; }
+
+  /* ===== clay brutalism layer =====
+     Brutalism keeps the clarity (2px ink outline, small hard shadow); clay brings the calm: big rounded corners,
+     soft puffy inner light/shade, warm pastels. One soft colour per role instead of a loud colour per card:
+     honey = selected / headline, mint = go, lavender = secondary action, coral = danger. More air, quieter type. */
+  :root {
+    --bw: 2px;
+    --r: 26px; --r-sm: 16px;
+    --sh: 4px 4px 0 var(--shadow-c); --sh-sm: 3px 3px 0 var(--shadow-c);
+    --clay: inset -5px -6px 14px rgba(150, 100, 40, .10), inset 5px 5px 12px rgba(255, 255, 255, .9);
+    --clay-sm: inset -3px -3px 7px rgba(150, 100, 40, .10), inset 3px 3px 6px rgba(255, 255, 255, .85);
+    --y: #fac775; --honey: #fac775; --mint: #9fe1cb; --lav: #cecbf6; --coral: #f5c4b3;
+    --red: #d85a30; --sky: #b5d4f4; --green: #9fe1cb; --blue: #cecbf6;
+    --on-pop: #2c2c2a;
+    --bg: #f3ece1; --dot: rgba(44, 44, 42, .07); --card: #fff8ee; --sunk: #fbf3e7;
+    --ink: #2c2c2a; --edge: #2c2c2a; --shadow-c: #2c2c2a; --muted: #6b6457; --hair: rgba(44, 44, 42, .12);
+    --good: #2f6b3a; --bad: #a3321f;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #1c1a17; --dot: rgba(250, 199, 117, .06); --card: #2a2622; --sunk: #24211d;
+      --ink: #f2e8da; --edge: #f2e8da; --shadow-c: #000000; --muted: #b8ad9d; --hair: rgba(242, 232, 218, .12);
+      --clay: inset -5px -6px 14px rgba(0, 0, 0, .35), inset 5px 5px 12px rgba(255, 255, 255, .05);
+      --clay-sm: inset -3px -3px 7px rgba(0, 0, 0, .3), inset 3px 3px 6px rgba(255, 255, 255, .05);
+      --good: #8fdcaa; --bad: #ff9b80;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #1c1a17; --dot: rgba(250, 199, 117, .06); --card: #2a2622; --sunk: #24211d;
+    --ink: #f2e8da; --edge: #f2e8da; --shadow-c: #000000; --muted: #b8ad9d; --hair: rgba(242, 232, 218, .12);
+    --clay: inset -5px -6px 14px rgba(0, 0, 0, .35), inset 5px 5px 12px rgba(255, 255, 255, .05);
+    --clay-sm: inset -3px -3px 7px rgba(0, 0, 0, .3), inset 3px 3px 6px rgba(255, 255, 255, .05);
+    --good: #8fdcaa; --bad: #ff9b80;
+  }
+  body { background-size: 26px 26px; }
+  .hot { color: var(--red); }
+
+  /* surfaces: outlined clay slabs with room to breathe */
+  .grid { gap: 26px; }
+  .card { border-width: var(--bw); border-radius: var(--r); box-shadow: var(--sh), var(--clay); padding: 22px 24px 24px; }
+  .topbar { border-width: var(--bw); box-shadow: var(--sh), var(--clay); }
+  .card > h2:first-child { font-size: 1.05rem; font-weight: 600; margin-bottom: 18px; }
+  .card > h2:first-child::before { width: 14px; height: 14px; border-width: 2px; background: var(--honey); border-radius: 50%; }
+  .grid > section:nth-child(n) { --shape: var(--honey); --shape-r: 50%; }
+  .card h2:not(:first-child) { font-size: .9rem; font-weight: 600; }
+  .card h2:not(:first-child)::before { background: var(--lav); }
+
+  /* status */
+  .pill { background: var(--card); box-shadow: var(--clay-sm); border-width: var(--bw); }
+  .pill.running, .pill.stopping, .pill.done { background: var(--mint); }
+  .pill.login { background: var(--honey); }
+  .pill.failed, .pill.stopped { background: var(--coral); }
+  .banner { border-width: var(--bw); box-shadow: var(--sh), var(--clay); font-size: 1rem; }
+  .banner.login { background: var(--honey); font-size: 1.15rem; }
+  .banner.done { background: var(--mint); }
+  .banner.failed, .banner.stopped { background: var(--coral); }
+  #otherJob { background: var(--lav); box-shadow: var(--sh-sm), var(--clay-sm); }
+  .optnote { background: var(--honey); box-shadow: var(--clay-sm); border-radius: 999px; padding: 7px 16px; }
+
+  /* tabs: soft track, honey pebble for the active scheme */
+  .tabs { box-shadow: var(--sh-sm), var(--clay-sm); }
+  .tab[aria-selected="true"], .tabs .tab[aria-selected="true"]:hover:not(:disabled) { background: var(--honey); box-shadow: var(--clay-sm); }
+
+  /* controls: pebbles pressed into the clay */
+  select, input[type="number"] { border-width: var(--bw); background: var(--sunk); box-shadow: var(--clay-sm); }
+  input[type="file"]::file-selector-button { border-width: var(--bw); background: var(--lav); box-shadow: var(--clay-sm); }
+  input[type="radio"], input[type="checkbox"] { accent-color: var(--ink); }
+  .choice { border-width: var(--bw); border-color: var(--hair); background: var(--sunk); box-shadow: var(--clay-sm); }
+  @media (hover: hover) and (pointer: fine) { .choice:hover { border-color: var(--edge); } }
+  .choice:has(input:checked) { background: var(--honey); border-color: var(--edge); box-shadow: var(--sh-sm), var(--clay-sm); transform: translate(-1px, -1px); }
+
+  /* buttons: cream by default, mint for go, lavender for build, coral for danger; they sink on press */
+  button { background: var(--card); border-width: var(--bw); border-radius: 999px; box-shadow: var(--sh-sm), var(--clay-sm);
+           font-size: .9rem; font-weight: 600; padding: 9px 20px 8px; }
+  button:active:not(:disabled) { transform: translate(3px, 3px); box-shadow: 0 0 0 var(--shadow-c), var(--clay-sm); }
+  button.primary { background: var(--mint); font-size: 1rem; padding: 11px 30px 10px; box-shadow: var(--sh), var(--clay-sm); }
+  button.primary:active:not(:disabled) { transform: translate(4px, 4px); }
+  button.danger { background: var(--coral); }
+  .buildBtn { background: var(--lav); }
+  #stopBtn { background: var(--card); }
+  @media (hover: hover) and (pointer: fine) {
+    button:not(.danger):not(#stopBtn):not(.buildBtn):not(.tab):not(.primary):hover:not(:disabled) { background: var(--sunk); color: var(--ink); }
+    button.primary:hover:not(:disabled) { background: var(--mint); color: var(--on-pop); }
+    button.danger:hover:not(:disabled) { background: var(--coral); }
+    .buildBtn:hover:not(:disabled) { background: var(--lav); }
+  }
+  .tabs .tab { box-shadow: none; }
+  .tabs .tab[aria-selected="true"] { box-shadow: var(--clay-sm); }
+
+  /* numbers: soft tiles, the headline one in honey */
+  .stats { gap: 12px; }
+  .stat { border-width: var(--bw); border-color: var(--hair); box-shadow: var(--clay-sm); border-radius: var(--r-sm); }
+  .stat:first-child { background: var(--honey); border-color: var(--edge); box-shadow: var(--sh-sm), var(--clay-sm); }
+  .stat b { font-size: 1.75rem; font-weight: 600; }
+  .stat span { font-size: .8rem; font-weight: 500; }
+  .stat span::first-letter { color: inherit; }
+
+  .bar { border-width: var(--bw); box-shadow: var(--clay-sm); }
+  .bar i { background-color: var(--mint); border-right-width: var(--bw); }
+
+  /* tables and tags stay quiet */
+  .scroll { border-width: var(--bw); border-color: var(--hair); box-shadow: var(--clay-sm); }
+  th { border-bottom-width: var(--bw); font-weight: 600; }
+  @media (hover: hover) and (pointer: fine) { tbody tr:hover { background: rgba(250, 199, 117, .16); } }
+  .tag { border-width: 1.5px; background: var(--lav); }
+  .tag.good { background: var(--mint); }
+  .tag.bad { background: var(--coral); }
+  .tag.warn { background: var(--honey); }
+  pre, code { border-color: var(--hair); }
+  @media (max-width: 760px) { .card { box-shadow: 3px 3px 0 var(--shadow-c), var(--clay); padding: 18px; } }
 </style>
 </head>
 <body>
