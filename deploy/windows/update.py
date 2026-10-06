@@ -44,6 +44,23 @@ def is_data(rel: str) -> bool:
     return parts[0] in DATA_DIRS or parts[0].startswith(".pw_profile") or Path(rel).suffix.lower() in DATA_EXT
 
 
+def missing_libs(req: str) -> list[str]:
+    """'name==version' lines of requirements.txt that the bundled Python does not have installed."""
+    from importlib.metadata import PackageNotFoundError, version
+    out = []
+    for line in req.splitlines():
+        line = line.split("#")[0].strip()
+        if "==" not in line:
+            continue
+        name, want = (s.strip() for s in line.split("==", 1))
+        try:
+            if version(name) != want:
+                out.append(line)
+        except PackageNotFoundError:
+            out.append(line)
+    return out
+
+
 def main() -> int:
     try:
         latest = get(f"https://api.github.com/repos/{REPO}/commits/{BRANCH}", 10,
@@ -67,9 +84,9 @@ def main() -> int:
 
     # new libraries first: if that fails, keep the old code (it matches the old libraries)
     new_req = z.read(files["requirements.txt"]) if "requirements.txt" in files else b""
-    old_req = (APP / "requirements.txt").read_bytes() if (APP / "requirements.txt").exists() else b""
-    if new_req and new_req.replace(b"\r", b"") != old_req.replace(b"\r", b""):
-        print("[update] new libraries - installing (a few minutes)...")
+    need = missing_libs(new_req.decode("utf-8", "replace"))
+    if need:
+        print(f"[update] new libraries {', '.join(need)} - installing (a few minutes)...")
         tmp = HERE / "requirements.new.txt"
         tmp.write_bytes(new_req)
         try:
