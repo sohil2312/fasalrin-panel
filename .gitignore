@@ -1,0 +1,31 @@
+# Farmer PII (Aadhaar, bank account numbers) — never commit
+*.csv
+*.csv.bak
+*.xlsx
+screenshots/
+reports/
+branches/
+master/
+stop.flag
+*.log
+
+# Browser sessions (portal cookies, login data): every profile the scripts create
+.pw_profile*/
+
+# Python / env
+.venv/
+__pycache__/
+*.pyc
+*.bak*
+
+# OS
+.DS_Store
+
+# Excel utilities (hold farmer PII / portal logins once used) and build output
+*.xlsm
+excel_utility/_build/
+
+# portable build output (deploy/windows/build_portable.py)
+dist/
+# clone of the public code-only repo (deploy/publish_public.py)
+.public_repo/

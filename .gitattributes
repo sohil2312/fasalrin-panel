@@ -1,0 +1,2 @@
+# shell scripts run on Linux (Oracle server): always LF
+*.sh text eol=lf

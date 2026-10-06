@@ -1,0 +1,1024 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fasalrin Control Panel</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Josefin+Sans:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+  /* Soft neo-brutalism for an operations panel.
+     Loud (ink edges, hard offset shadows, flat colour) only where it carries meaning: job status, the login
+     prompt, scheme switch and actions. Calm paper surfaces, system type and hairline tables everywhere else,
+     because operators glance at this for hours. Motion = feedback only (press, live progress, running dot),
+     crisp and under 200 ms; nothing animates on the 2-second poll re-render. */
+  :root {
+    --bg: #f4f0e8; --card: #fffdf8; --sunk: #f8f4ec; --ink: #121212; --muted: #5e5850; --hair: #e4dccd;
+    --edge: #121212; --shadow-c: #121212; --chrome: rgba(244, 240, 232, .78);
+    --accent: #13795b; --accent-ink: #ffffff; --accent-soft: #c8f0dc;
+    --sel: #ffd84d; --sel-ink: #121212; --sel-soft: #fff3c2;
+    --warn: #7a4f00; --warn-soft: #ffe08a; --bad: #a3221a; --bad-soft: #ffd2cb;
+    --good: #12643a; --good-soft: #c2efd2; --info: #23428a; --info-soft: #d6e0fd;
+    --r: 12px; --r-sm: 8px;
+    --sh: 4px 4px 0 var(--shadow-c); --sh-sm: 2px 2px 0 var(--shadow-c);
+    --ease-out: cubic-bezier(.23, 1, .32, 1);      /* strong ease-out for UI feedback */
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #141619; --card: #1c1f24; --sunk: #17191d; --ink: #f1ede4; --muted: #a8a297; --hair: #2d3138;
+      --edge: #d9d3c6; --shadow-c: #000000; --chrome: rgba(20, 22, 25, .78);
+      --accent: #3ccf98; --accent-ink: #07130e; --accent-soft: #163a2c;
+      --sel: #ffd84d; --sel-ink: #121212; --sel-soft: #3a3217;
+      --warn: #ffd166; --warn-soft: #3d3112; --bad: #ff8f84; --bad-soft: #43211d;
+      --good: #6fe0a0; --good-soft: #17382a; --info: #a9c1ff; --info-soft: #1e2a45;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #141619; --card: #1c1f24; --sunk: #17191d; --ink: #f1ede4; --muted: #a8a297; --hair: #2d3138;
+    --edge: #d9d3c6; --shadow-c: #000000; --chrome: rgba(20, 22, 25, .78);
+    --accent: #3ccf98; --accent-ink: #07130e; --accent-soft: #163a2c;
+    --sel: #ffd84d; --sel-ink: #121212; --sel-soft: #3a3217;
+    --warn: #ffd166; --warn-soft: #3d3112; --bad: #ff8f84; --bad-soft: #43211d;
+    --good: #6fe0a0; --good-soft: #17382a; --info: #a9c1ff; --info-soft: #1e2a45;
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 100%/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text", "Segoe UI", system-ui, Roboto, sans-serif;
+         font-size: .9375rem; -webkit-font-smoothing: antialiased; }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 0 16px 56px; }
+  code { font: .8rem ui-monospace, "SF Mono", Consolas, monospace; background: var(--sunk); border: 1px solid var(--hair);
+         padding: 1px 5px; border-radius: 5px; }
+
+  /* top bar: translucent material that stays put, so status and the scheme switch are always in reach */
+  .topbar { position: sticky; top: 0; z-index: 10; margin: 0 -16px 20px; padding: 14px 16px 12px;
+            background: var(--chrome); -webkit-backdrop-filter: blur(16px) saturate(160%); backdrop-filter: blur(16px) saturate(160%);
+            border-bottom: 2px solid var(--edge); }
+  header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  .brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
+  .mark { width: 40px; height: 40px; flex: none; border: 2px solid var(--edge); border-radius: var(--r-sm); background: var(--sel);
+          box-shadow: var(--sh-sm); display: grid; place-items: center; font-weight: 900; color: var(--sel-ink); font-size: 1.25rem; }
+  h1 { font-size: 1.375rem; margin: 0; letter-spacing: -.02em; font-weight: 800; line-height: 1.1; }
+  .sub { color: var(--muted); font-size: .8125rem; }
+  .bar-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-top: 12px; }
+  h2 { font-size: .75rem; margin: 0 0 14px; color: var(--ink); font-weight: 800; text-transform: uppercase; letter-spacing: .08em;
+       display: flex; align-items: center; gap: 8px; line-height: 1.3; }
+  h2::before { content: ""; width: 10px; height: 10px; background: var(--sel); border: 2px solid var(--edge); border-radius: 3px; flex: none; }
+  h2 .muted { font-weight: 500; letter-spacing: 0; text-transform: none; }
+
+  /* status pill: the one thing to read from across the room */
+  .pill { display: inline-flex; align-items: center; gap: 8px; padding: 6px 14px; border-radius: 999px; font-weight: 800;
+          font-size: .75rem; text-transform: uppercase; letter-spacing: .06em; background: var(--card); color: var(--muted);
+          border: 2px solid var(--edge); box-shadow: var(--sh-sm); white-space: nowrap; }
+  .pill::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: currentColor; opacity: .45; }
+  .pill.running, .pill.stopping { background: var(--accent-soft); color: var(--good); }
+  .pill.login { background: var(--warn-soft); color: var(--warn); }
+  .pill.done { background: var(--good-soft); color: var(--good); }
+  .pill.failed, .pill.stopped { background: var(--bad-soft); color: var(--bad); }
+  .pill.running::before, .pill.login::before { opacity: 1; animation: beat 1.2s var(--ease-out) infinite; }
+  @keyframes beat { 0%, 100% { transform: scale(1); opacity: 1; } 50% { transform: scale(.55); opacity: .5; } }
+
+  /* scheme switch: a chunky segmented control */
+  .tabs { display: inline-flex; padding: 3px; background: var(--card); border: 2px solid var(--edge);
+          border-radius: calc(var(--r-sm) + 4px); box-shadow: var(--sh-sm); max-width: 100%; }
+  .tab { border: 2px solid transparent; border-radius: var(--r-sm); background: none; padding: 7px 16px; text-align: left;
+         color: var(--muted); font-size: .9375rem; font-weight: 800; box-shadow: none; letter-spacing: -.005em;
+         transition: background-color .15s ease, color .15s ease, border-color .15s ease, transform .12s var(--ease-out); }
+  .tab small { display: block; font-weight: 500; font-size: .75rem; margin-top: 1px; letter-spacing: 0; }
+  .tab[aria-selected="true"] { color: var(--sel-ink); background: var(--sel); border-color: var(--edge); }
+  .tab[aria-selected="true"] small { color: #3d3628; }
+  .tab:active { transform: scale(.97); box-shadow: none; }
+  @media (hover: hover) and (pointer: fine) { .tab:not([aria-selected="true"]):hover { color: var(--ink); transform: none; box-shadow: none; } }
+
+  a { color: var(--accent); font-weight: 700; text-underline-offset: 3px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  .grid > * { min-width: 0; }              /* let wide tables scroll inside their card, not the page */
+  td { overflow-wrap: anywhere; }
+  @media (max-width: 760px) {
+    .grid { grid-template-columns: 1fr; }
+    .tab { padding: 6px 10px; }
+    .tab small, .sub { display: none; }
+    .topbar { padding: 10px 16px; }
+    .bar-row { margin-top: 10px; }
+  }
+  .card { background: var(--card); border: 2px solid var(--edge); border-radius: var(--r); padding: 18px; box-shadow: var(--sh);
+          overflow-x: auto; }
+  .span2 { grid-column: 1 / -1; }
+
+  /* banners: status / completion / error — login is the loudest thing on the page */
+  .banner { border-radius: var(--r); padding: 14px 18px; font-weight: 800; margin-bottom: 20px; display: none;
+            border: 2px solid var(--edge); box-shadow: var(--sh); align-items: center; gap: 12px; }
+  .banner::before { content: ""; width: 12px; height: 12px; border-radius: 50%; background: currentColor; flex: none; }
+  .banner.login { display: flex; background: var(--warn-soft); color: var(--warn); font-size: 1.125rem; }
+  .banner.login::before { animation: beat 1.2s var(--ease-out) infinite; }
+  .banner.done { display: flex; background: var(--good-soft); color: var(--good); }
+  .banner.failed, .banner.stopped { display: flex; background: var(--bad-soft); color: var(--bad); }
+  #otherJob { background: var(--info-soft); color: var(--info); border: 2px solid var(--edge); border-radius: var(--r-sm);
+              padding: 8px 12px; font-weight: 700; margin: 0 0 16px !important; }
+
+  /* form controls */
+  label { display: block; font-weight: 700; margin: 14px 0 6px; font-size: .875rem; }
+  select, input[type="number"] { width: 100%; padding: 9px 12px; border-radius: var(--r-sm); border: 2px solid var(--edge);
+           background: var(--card); color: var(--ink); font: inherit; font-weight: 600; }
+  input[type="number"].limit { width: 96px; display: inline-block; margin: 0 6px; padding: 6px 10px; }
+  input[type="file"] { font: inherit; font-size: .8125rem; color: var(--muted); max-width: 100%; }
+  input[type="file"]::file-selector-button { font: inherit; font-weight: 700; font-size: .8125rem; margin-right: 10px; padding: 6px 12px;
+           border: 2px solid var(--edge); border-radius: var(--r-sm); background: var(--sunk); color: var(--ink); cursor: pointer; }
+  input[type="radio"], input[type="checkbox"] { accent-color: var(--ink); width: 16px; height: 16px; vertical-align: -2px; }
+  :focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+  .choices { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  @media (max-width: 480px) { .choices { grid-template-columns: 1fr; } }
+  .choice { border: 2px solid var(--hair); border-radius: var(--r-sm); padding: 11px 12px; cursor: pointer; font-weight: 700; margin: 0;
+            background: var(--card); transition: border-color .15s ease, background-color .15s ease, box-shadow .15s ease; }
+  @media (hover: hover) and (pointer: fine) { .choice:hover { border-color: var(--edge); } }
+  .choice input { margin-right: 7px; }
+  .choice small { display: block; color: var(--muted); margin-top: 3px; font-weight: 500; }
+  .choice:has(input:checked) { border-color: var(--edge); background: var(--sel-soft); box-shadow: var(--sh-sm); }
+  .choice:has(input:disabled) { cursor: not-allowed; opacity: .7; }
+  .q { display: none; margin-top: 4px; }
+  .q.show { display: block; animation: rise .18s var(--ease-out); }
+  @keyframes rise { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+
+  /* buttons: they sink into their shadow on press (instant, 100 ms) */
+  button { font: inherit; font-weight: 800; font-size: .875rem; border-radius: var(--r-sm); padding: 9px 16px; border: 2px solid var(--edge);
+           background: var(--card); color: var(--ink); cursor: pointer; box-shadow: var(--sh-sm);
+           transition: transform .1s var(--ease-out), box-shadow .1s var(--ease-out), background-color .15s ease; }
+  button:active:not(:disabled) { transform: translate(2px, 2px) scale(.98); box-shadow: 0 0 0 var(--shadow-c); }
+  @media (hover: hover) and (pointer: fine) {
+    button:hover:not(:disabled) { background: var(--sunk); }
+    button.primary:hover:not(:disabled) { background: var(--accent); filter: brightness(1.06); }
+    button.danger:hover:not(:disabled) { background: var(--bad-soft); filter: brightness(.97); }
+  }
+  button.primary { background: var(--accent); color: var(--accent-ink); padding: 11px 26px; font-size: .9375rem;
+                   text-transform: uppercase; letter-spacing: .06em; box-shadow: var(--sh); }
+  button.primary:active:not(:disabled) { transform: translate(4px, 4px) scale(.98); }
+  button.danger { color: var(--bad); background: var(--bad-soft); }
+  button:disabled { opacity: .4; cursor: not-allowed; box-shadow: none; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 16px; align-items: center; }
+  .err { color: var(--bad); font-weight: 700; }
+
+  /* numbers: the first tile of each group is the headline */
+  .stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(124px, 1fr)); gap: 10px; }
+  .stat { border: 2px solid var(--hair); border-radius: var(--r-sm); padding: 10px 12px; background: var(--sunk); }
+  .stat:first-child { border-color: var(--edge); background: var(--sel-soft); }
+  .stat b { display: block; font-size: 1.625rem; font-weight: 800; letter-spacing: -.02em; line-height: 1.15; font-variant-numeric: tabular-nums; }
+  .stat span { color: var(--muted); font-size: .6875rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; }
+
+  /* progress: width eases to each new value; stripes crawl (linear) only while a job is live */
+  .bar { height: 18px; background: var(--sunk); border: 2px solid var(--edge); border-radius: 999px; overflow: hidden; margin: 14px 0 6px; }
+  .bar i { display: block; height: 100%; width: 0; background-color: var(--accent); transition: width .5s var(--ease-out); }
+  .bar i.live { background-image: repeating-linear-gradient(-45deg, transparent 0 8px, rgba(255, 255, 255, .24) 8px 16px);
+                background-size: 22.63px 22.63px; animation: crawl .8s linear infinite; }
+  @keyframes crawl { to { background-position: 22.63px 0; } }
+  .muted { color: var(--muted); }
+
+  /* tables stay quiet: hairlines, sticky header, no boxes */
+  table { width: 100%; border-collapse: collapse; font-size: .8125rem; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--hair); vertical-align: top; }
+  th { color: var(--ink); font-weight: 800; font-size: .6875rem; text-transform: uppercase; letter-spacing: .06em;
+       border-bottom: 2px solid var(--edge); position: sticky; top: 0; background: var(--card); z-index: 1; }
+  @media (hover: hover) and (pointer: fine) { tbody tr:hover { background: var(--sunk); } }
+  td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+  td button { padding: 5px 12px; font-size: .8125rem; }
+  .tag { display: inline-block; font-weight: 800; font-size: .6875rem; padding: 2px 8px; border-radius: 5px; text-transform: uppercase;
+         letter-spacing: .04em; background: var(--info-soft); color: var(--info); white-space: nowrap; border: 1.5px solid currentColor; }
+  .tag.good { background: var(--good-soft); color: var(--good); }
+  .tag.bad { background: var(--bad-soft); color: var(--bad); }
+  .tag.warn { background: var(--warn-soft); color: var(--warn); }
+  .scroll { max-height: 420px; overflow: auto; border: 2px solid var(--hair); border-radius: var(--r-sm); }
+  pre { margin: 0; white-space: pre-wrap; font: .75rem/1.5 ui-monospace, "SF Mono", Consolas, monospace; color: var(--muted);
+        background: var(--sunk); border: 2px dashed var(--hair); border-radius: var(--r-sm); padding: 10px 12px; }
+  pre:empty { display: none; }
+  .note { color: var(--muted); font-size: .8125rem; margin: 12px 0 6px; }
+
+  /* reduced motion: keep colour / opacity feedback, drop movement and loops */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation: none !important; }
+    button, .tab { transition: background-color .15s ease, color .15s ease !important; }
+    button:active:not(:disabled), button.primary:active:not(:disabled), .tab:active { transform: none; }
+    .bar i { transition: none; }
+  }
+  @media (prefers-reduced-transparency: reduce) { .topbar { background: var(--bg); backdrop-filter: none; -webkit-backdrop-filter: none; } }
+  @media (prefers-contrast: more) { :root { --hair: var(--edge); --muted: var(--ink); } }
+  /* ===== neo-brutalist layer =====
+     Playful neo-brutalism: amber dotted page, warm cream cards with rounded black outlines and hard shadows,
+     signal-yellow buttons, a red accent for what matters, sky-blue chips, a yellow highlighter on the
+     active tab. Rounded geometric type (Josefin Sans, system font when offline). */
+  :root {
+    --bw: 2.5px;
+    --r: 22px; --r-sm: 14px;
+    --sh: 6px 6px 0 var(--shadow-c); --sh-sm: 4px 4px 0 var(--shadow-c);
+    --y: #ffe500; --red: #ff4f4f; --sky: #6ccfe0; --green: #6abf4b; --blue: #7286ff; --amber: #ffb800;
+    --on-pop: #141414;
+    --bg: #ffb800; --dot: rgba(20, 20, 20, .38); --card: #fff4ea; --sunk: #fff9f3;
+    --ink: #141414; --edge: #141414; --shadow-c: #141414; --muted: #5d5246; --hair: rgba(20, 20, 20, .16);
+    --good: #2f7a1e; --bad: #c62828;
+    --font: "Josefin Sans", -apple-system, "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #1b1915; --dot: rgba(255, 184, 0, .28); --card: #26231e; --sunk: #201e19;
+      --ink: #f7efe4; --edge: #f7efe4; --shadow-c: #ffb800; --muted: #bdb09f; --hair: rgba(247, 239, 228, .16);
+      --good: #8fdc6f; --bad: #ff8a80;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #1b1915; --dot: rgba(255, 184, 0, .28); --card: #26231e; --sunk: #201e19;
+    --ink: #f7efe4; --edge: #f7efe4; --shadow-c: #ffb800; --muted: #bdb09f; --hair: rgba(247, 239, 228, .16);
+    --good: #8fdc6f; --bad: #ff8a80;
+  }
+
+  body { font-family: var(--font); background-color: var(--bg);
+         background-image: radial-gradient(var(--dot) 1.3px, transparent 1.6px); background-size: 22px 22px; }
+  button, select, input { font-family: var(--font); }
+  .hot { color: var(--red); }
+
+  /* top bar: a floating cream card, like the profile row in the reference */
+  .topbar { top: 10px; margin: 14px 0 26px; padding: 14px 18px; background: var(--card); border: var(--bw) solid var(--edge);
+            border-radius: var(--r); box-shadow: var(--sh); -webkit-backdrop-filter: none; backdrop-filter: none; }
+  .mark { width: 48px; height: 48px; border-radius: 50%; border: var(--bw) solid var(--edge); background: var(--y);
+          color: var(--on-pop); box-shadow: none; font-size: 1.4rem; transform: none; }
+  h1 { font-size: 1.55rem; font-weight: 700; letter-spacing: -.01em; text-transform: none; }
+  h1::after { content: none; }
+  .sub { font-size: .85rem; }
+
+  /* status pill = the sky "15 Stars" chip */
+  .pill { background: var(--sky); color: var(--on-pop); border: var(--bw) solid var(--edge); border-radius: 999px;
+          box-shadow: none; font-size: .8rem; padding: 7px 16px 5px; letter-spacing: .04em; }
+  .pill::before { background: var(--on-pop); opacity: .55; }
+  .pill.running, .pill.stopping { background: var(--green); color: var(--on-pop); }
+  .pill.login { background: var(--y); color: var(--on-pop); }
+  .pill.done { background: var(--sky); color: var(--on-pop); }
+  .pill.failed, .pill.stopped { background: var(--red); color: var(--on-pop); }
+
+  /* scheme switch = the bottom bar: plain labels, a yellow highlighter swipe behind the active one */
+  .tabs { background: var(--card); border: var(--bw) solid var(--edge); border-radius: 999px; box-shadow: var(--sh-sm);
+          padding: 6px 10px; gap: 6px; }
+  .tab { position: relative; z-index: 0; border: 0; border-radius: 999px; background: none; color: var(--ink);
+         text-transform: none; letter-spacing: 0; padding: 8px 18px 6px; font-weight: 700; }
+  .tab small { color: var(--muted); font-weight: 400; }
+  .tab { border: var(--bw) solid transparent; transition: background-color .15s ease, border-color .15s ease, transform .1s var(--ease-out); }
+  .tab[aria-selected="true"] { background: var(--y); color: var(--on-pop); border-color: var(--edge); }
+  .tab:active { transform: scale(.97); }
+  .tab[aria-selected="true"] small { color: #3a3128; }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .tab[aria-selected="true"] small { color: #2b241c; } }
+
+  /* cards: cream, rounded, black outline, hard shadow; the title gets a small geometric shape */
+  .grid { gap: 28px; }
+  .card { background: var(--card); border: var(--bw) solid var(--edge); border-radius: var(--r); box-shadow: var(--sh);
+          padding: 20px 22px 22px; }
+  .card > h2:first-child { margin: 0 0 16px; padding: 0; background: none; border: 0; color: var(--ink);
+                           font-size: 1.2rem; font-weight: 700; text-transform: none; letter-spacing: 0; gap: 10px; }
+  .card > h2:first-child::before { width: 16px; height: 16px; border: var(--bw) solid var(--edge); background: var(--shape, var(--y));
+                                   border-radius: var(--shape-r, 4px); }
+  .card > h2:first-child .muted { color: var(--muted); font-size: .85rem; }
+  .grid > section:nth-child(1) { --shape: var(--green); --shape-r: 3px; }
+  .grid > section:nth-child(2) { --shape: var(--red); --shape-r: 50%; }
+  .grid > section:nth-child(3) { --shape: var(--blue); --shape-r: 3px; }
+  .grid > section:nth-child(4) { --shape: var(--y); --shape-r: 50%; }
+  .grid > section:nth-child(5) { --shape: var(--sky); --shape-r: 3px; }
+  .grid > section:nth-child(6) { --shape: var(--red); --shape-r: 3px; }
+  .card h2:not(:first-child) { margin-top: 24px; font-size: .95rem; text-transform: none; letter-spacing: 0; font-weight: 700; }
+  .card h2:not(:first-child)::before { width: 10px; height: 10px; border-radius: 50%; background: var(--red); border-width: 2px; }
+
+  .banner { border: var(--bw) solid var(--edge); border-radius: var(--r); box-shadow: var(--sh); text-transform: none;
+            font-size: 1.1rem; background-image: none; }
+  .banner::before { background: var(--on-pop); }
+  .banner.login { background: var(--y); color: var(--on-pop); font-size: 1.3rem; }
+  .banner.done { background: var(--green); color: var(--on-pop); }
+  .banner.failed, .banner.stopped { background: var(--red); color: var(--on-pop); }
+  #otherJob { background: var(--sky); color: var(--on-pop); border: var(--bw) solid var(--edge); border-radius: var(--r-sm); box-shadow: var(--sh-sm); }
+
+  /* controls */
+  label { font-weight: 700; }
+  select, input[type="number"] { border: var(--bw) solid var(--edge); border-radius: var(--r-sm); box-shadow: none;
+                                 background: var(--sunk); padding: 10px 14px 8px; }
+  input[type="file"]::file-selector-button { border: var(--bw) solid var(--edge); border-radius: 999px; background: var(--sky);
+                                             color: var(--on-pop); padding: 6px 14px 4px; font-family: var(--font); }
+  input[type="radio"], input[type="checkbox"] { accent-color: var(--red); }
+  .choice { border: var(--bw) solid var(--edge); border-radius: var(--r-sm); background: var(--sunk); }
+  .choice:has(input:checked) { background: var(--y); color: var(--on-pop); box-shadow: var(--sh-sm); transform: translate(-2px, -2px); }
+  .choice:has(input:checked) small { color: #3a3128; }
+
+  /* buttons = "I'm Done!": yellow, outlined, hard shadow, sink on press */
+  button { background: var(--y); color: var(--on-pop); border: var(--bw) solid var(--edge); border-radius: var(--r-sm);
+           box-shadow: var(--sh-sm); text-transform: none; letter-spacing: 0; font-size: .95rem; font-weight: 700; padding: 9px 18px 7px; }
+  button:active:not(:disabled) { transform: translate(4px, 4px); box-shadow: 0 0 0 var(--shadow-c); }
+  button.primary { background: var(--y); color: var(--on-pop); font-size: 1.15rem; padding: 12px 34px 10px; box-shadow: var(--sh); }
+  button.primary:active:not(:disabled) { transform: translate(6px, 6px); }
+  button.danger { background: var(--red); color: var(--on-pop); }
+  #stopBtn { background: var(--card); color: var(--ink); }
+  .buildBtn { background: var(--sky); color: var(--on-pop); }
+  @media (hover: hover) and (pointer: fine) {
+    button:hover:not(:disabled) { filter: brightness(1.04); }
+    button.primary:hover:not(:disabled), button:not(.danger):not(#stopBtn):not(.buildBtn):not(.tab):hover:not(:disabled) { background: var(--y); color: var(--on-pop); }
+    button.danger:hover:not(:disabled) { background: var(--red); }
+    #stopBtn:hover:not(:disabled) { background: var(--sunk); color: var(--ink); }
+    .buildBtn:hover:not(:disabled) { background: var(--sky); }
+  }
+  button:disabled { opacity: .45; box-shadow: none; filter: grayscale(.5); }
+
+  /* number tiles = the timer boxes: big digit in an outlined box, label's first letter in red */
+  .stat { background: var(--sunk); color: var(--ink); border: var(--bw) solid var(--edge); border-radius: var(--r-sm);
+          box-shadow: var(--sh-sm); padding: 12px 14px 10px; }
+  .stat:first-child { background: var(--y); color: var(--on-pop); border-color: var(--edge); }
+  .stat b { font-size: 2.1rem; font-weight: 700; letter-spacing: -.01em; }
+  .stat span { display: block; color: var(--muted); text-transform: none; letter-spacing: 0; font-size: .85rem; font-weight: 600; }
+  .stat span::first-letter { color: var(--red); }
+  .stat:first-child span { color: #3a3128; }
+
+  .bar { height: 22px; border: var(--bw) solid var(--edge); border-radius: 999px; box-shadow: var(--sh-sm); background: var(--sunk); }
+  .bar i { background-color: var(--y); border-right: var(--bw) solid var(--edge); }
+  .bar i.live { background-image: repeating-linear-gradient(-45deg, transparent 0 8px, rgba(20, 20, 20, .14) 8px 16px); }
+
+  /* tables = the friends list: outlined box, black row rules */
+  .scroll { border: var(--bw) solid var(--edge); border-radius: var(--r-sm); background: var(--sunk); }
+  th { background: var(--sunk); color: var(--ink); border-bottom: var(--bw) solid var(--edge); text-transform: none;
+       letter-spacing: 0; font-size: .8rem; font-weight: 700; z-index: 3; }
+  td { border-bottom: 1.5px solid var(--hair); }
+  @media (hover: hover) and (pointer: fine) { tbody tr:hover { background: rgba(255, 229, 0, .18); } }
+  .tag { border: 2px solid var(--edge); border-radius: 999px; background: var(--sky); color: var(--on-pop); box-shadow: none;
+         text-transform: none; letter-spacing: 0; font-size: .75rem; padding: 3px 10px 1px; }
+  .tag.good { background: var(--green); color: var(--on-pop); }
+  .tag.bad { background: var(--red); color: var(--on-pop); }
+  .tag.warn { background: var(--y); color: var(--on-pop); }
+  pre { border: 2px dashed var(--edge); border-radius: var(--r-sm); color: var(--ink); background: var(--sunk); }
+  code { border: 1.5px solid var(--edge); border-radius: 6px; background: var(--sunk); }
+  .err { color: var(--bad); }
+
+  .optnote { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; align-items: center;
+             background: var(--y); color: var(--on-pop); border: var(--bw) solid var(--edge); border-radius: var(--r-sm);
+             padding: 6px 12px; font-size: .8rem; margin-top: 14px; }
+  .optnote a { color: var(--on-pop); }
+  .inline3 select { flex: 1 1 280px; min-width: 0; width: auto; }
+  .inline3 input[type=file] { flex: 0 1 260px; min-width: 0; }
+  .solrow select { flex: 1 1 260px; min-width: 0; max-width: 520px; width: auto; }
+  #solInfo { max-width: 520px; }
+  @media (max-width: 760px) {
+    h1 { font-size: 1.2rem; }
+    .topbar { top: 6px; margin-top: 8px; padding: 10px 12px; }
+    .card { box-shadow: 4px 4px 0 var(--shadow-c); padding: 16px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .choice:has(input:checked) { transform: none; }
+  }
+  .tabs .tab[aria-selected="true"]:hover:not(:disabled) { background: var(--y); color: var(--on-pop); }
+  .tabs .tab:not([aria-selected="true"]):hover:not(:disabled) { background: var(--sunk); border-color: var(--hair); }
+  /* compact top bar: brand, tabs and status on one line */
+  .topbar { padding: 8px 14px; margin-bottom: 20px; }
+  .mark { width: 36px; height: 36px; }
+  h1 { font-size: 1.25rem; white-space: nowrap; }
+  .sub { display: none; }
+  .tabs { margin: 0 auto; }
+  .tab { padding: 6px 16px; white-space: nowrap; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+  <header>
+    <div class="brand">
+      <div class="mark" aria-hidden="true">F</div>
+      <div><h1>Fasalrin <span class="hot">Control</span> Panel</h1><div class="sub">Branch automation for fasalrin.gov.in · runs on this PC</div></div>
+    </div>
+    <!-- one switch for the whole dashboard: each tab shows only its own master, lists, jobs and totals -->
+    <nav class="tabs" role="tablist" aria-label="Scheme">
+      <button role="tab" class="tab" data-tab="regular" aria-selected="true"
+        title="2025-26 loans · entry, approval, IS claims">IS regular</button>
+      <button role="tab" class="tab" data-tab="additional" aria-selected="false"
+        title="Rollover claims for 2024-25 loans">IS additional</button>
+      <button role="tab" class="tab" data-tab="pri" aria-selected="false"
+        title="3% PRI claims for 2024-25 loans">PRI additional</button>
+      <button role="tab" class="tab" data-tab="prireg" aria-selected="false"
+        title="3% PRI claims for 2025-26 loans">PRI regular</button>
+    </nav>
+    <span id="pill" class="pill" role="status" aria-live="polite">idle</span>
+  </header>
+  </div>
+  <div id="otherJob" style="display:none"></div>
+
+  <div id="banner" class="banner" role="alert"></div>
+
+  <div class="grid">
+    <!-- master list -> branch work lists -->
+    <section class="card" id="masterCard">
+      <h2 id="masterTitle">1 · Master file — IS regular (all branches)</h2>
+      <div class="choices" style="display:none">
+        <label class="choice"><input type="radio" name="mtype" value="regular" checked>IS regular master
+          <small>pendency file: Status Pending rows</small></label>
+        <label class="choice"><input type="radio" name="mtype" value="additional">IS additional master
+          <small>rollover claims: rows with Int Sub Amt &gt; 0</small></label>
+        <label class="choice"><input type="radio" name="mtype" value="pri">PRI additional master
+          <small>3% PRI claims: rows with 3% PRI &gt; 0</small></label>
+        <label class="choice"><input type="radio" name="mtype" value="prireg">PRI regular master
+          <small>3% PRI claims on 2025-26 loans: rows with 3% PRI &gt; 0</small></label>
+      </div>
+      <div class="row" style="margin-top:0">
+        <select id="master" style="max-width:420px"></select>
+        <input type="file" id="mFile" accept=".xlsx">
+        <button id="mUpBtn" disabled>Upload master</button>
+        <span id="mMsg" class="muted"></span>
+      </div>
+      <p class="note">Upload the master .xlsx of <b>all branches</b> once; pick the newest one above.</p>
+    </section>
+
+    <!-- step 2: one branch at a time: pick it, see its counts, build its work list -->
+    <section class="card" id="buildCard">
+      <h2>2 · Build branch work list</h2>
+      <p class="note" id="mHelp">Build a branch's work list: that SOL's <b>Pending</b> rows, compared with the
+        branch's progress file and saved portal reports (kept separately in <code>branches/&lt;SOL&gt;/</code>).</p>
+      <label for="solPick">Branch</label>
+      <div class="row solrow" style="margin-top:0">
+        <select id="solPick"><option value="">Upload the master .xlsx file.</option></select>
+        <button id="buildOne" class="buildBtn" disabled>Build</button>
+      </div>
+      <div class="stats" id="solInfo" style="margin-top:12px"></div>
+      <div id="buildMsg" class="muted" style="margin-top:8px"></div>
+    </section>
+
+    <!-- step 3: pick the branch work list, upload its approved report, match -->
+    <section class="card span2" id="repCard">
+      <h2>3 · Select branch &amp; match approved report <span class="muted" id="repFor"></span></h2>
+      <div class="row inline3" style="margin-top:0">
+        <select id="csv" aria-label="Branch work list"></select>
+        <input type="file" id="repFile" accept=".zip,.xlsx" aria-label="Portal report">
+        <button id="repUpBtn" disabled>Upload report</button>
+        <button class="primary" id="repMatchBtn" disabled>Match</button>
+      </div>
+      <p class="note" id="repHelp" style="margin:8px 0 0">Pick the branch work list above first.</p>
+      <span id="repMsg" class="muted"></span>
+      <div id="repInfo" class="muted" style="margin-top:8px"></div>
+      <div id="repMatchMsg" class="muted" style="margin-top:6px"></div>
+      <div class="row" style="margin-top:8px;display:none" id="upRow">
+        <input type="file" id="upFile" accept=".csv,text/csv">
+        <button id="upBtn" disabled>Upload CSV</button>
+        <span id="upMsg" class="muted"></span>
+      </div>
+      <div class="optnote"><span><b>Optional</b> — no report? The CSV progress file is used.</span>
+        <a href="#" id="upToggle">Upload a work list CSV instead</a></div>
+    </section>
+
+    <!-- start a job -->
+    <section class="card" id="startCard">
+      <h2 id="startTitle">4 · Start — IS regular</h2>
+      <div class="choices" style="display:none">
+        <label class="choice"><input type="radio" name="scheme" value="regular" checked>IS regular
+          <small>2025-26 loans: entry, approval, IS claims</small></label>
+        <label class="choice"><input type="radio" name="scheme" value="additional">IS additional
+          <small>rollover claims for 2024-25 loans</small></label>
+        <label class="choice"><input type="radio" name="scheme" value="pri">PRI additional
+          <small>3% PRI claims for 2024-25 loans</small></label>
+        <label class="choice"><input type="radio" name="scheme" value="prireg">PRI regular
+          <small>3% PRI claims for 2025-26 loans</small></label>
+      </div>
+
+      <label>Job</label>
+      <div class="choices">
+        <label class="choice" data-scheme="regular"><input type="radio" name="kind" value="entry">Enter applications
+          <small>Log in with the Branch User login</small></label>
+        <label class="choice" data-scheme="regular"><input type="radio" name="kind" value="approve">Approve applications
+          <small>Log in with the Branch Head login</small></label>
+        <label class="choice" data-scheme="regular"><input type="radio" name="kind" value="claim">File IS claims
+          <small>Approved loans · Branch User login</small></label>
+        <label class="choice" data-scheme="regular"><input type="radio" name="kind" value="claim_approve">Approve IS claims
+          <small>Claims we filed · Branch Head login</small></label>
+        <label class="choice" data-scheme="additional"><input type="radio" name="kind" value="additional">File IS additional claims
+          <small>Rollover · Branch User login</small></label>
+        <label class="choice" data-scheme="additional"><input type="radio" name="kind" value="additional_approve">Approve IS additional claims
+          <small>Rollover claims we filed · Branch Head login</small></label>
+        <label class="choice" data-scheme="pri"><input type="radio" name="kind" value="pri">File PRI additional claims
+          <small>FY 2024-25 PENDING · Branch User login</small></label>
+        <label class="choice" data-scheme="pri"><input type="radio" name="kind" value="pri_approve">Approve PRI additional claims
+          <small>PRI claims we filed · Branch Head login</small></label>
+        <label class="choice" data-scheme="prireg"><input type="radio" name="kind" value="prireg">File PRI regular claims
+          <small>FY 2025-26 PENDING · Branch User login</small></label>
+        <label class="choice" data-scheme="prireg"><input type="radio" name="kind" value="prireg_approve">Approve PRI regular claims
+          <small>PRI regular claims we filed · Branch Head login</small></label>
+      </div>
+
+      <div class="q" id="qEntry">
+        <label class="choice" style="margin-top:12px"><input type="checkbox" id="retryReverify">
+          Retry Aadhaar-reverify rows once
+          <small>Every AADHAAR_REVERIFY row not retried before goes into this run once more (after the new rows); if the
+            portal still asks to reverify, it stays hand work for good ("retried once").</small></label>
+        <label class="choice" style="margin-top:8px"><input type="checkbox" id="onlyReverify">
+          Only those rows this run
+          <small>Do just the Aadhaar-reverify retries now; new rows wait for a later run.</small></label>
+      </div>
+      <div class="q" id="qApprove">
+        <label class="choice" style="margin-top:12px"><input type="checkbox" id="approveOk">
+          <span id="okText">Yes, approve every application listed as Submitted for the branch</span>
+          <small id="okSmall">Approving cannot be undone on the portal.</small></label>
+        <label for="limitN">At most <input type="number" id="limitN" class="limit" min="1" step="1" placeholder="all">
+          this run <small class="muted">(optional, e.g. 2 for a first test; empty = all)</small></label>
+      </div>
+
+      <div class="row">
+        <button class="primary" id="startBtn" disabled>Start</button>
+        <span id="startErr" class="err"></span>
+      </div>
+    </section>
+
+    <!-- running job -->
+    <section class="card" id="jobCard">
+      <h2>Current job</h2>
+      <div id="jobIdle" class="muted">Nothing running.</div>
+      <div id="jobLive" style="display:none">
+        <div><b id="jobTitle"></b> <span class="muted" id="jobMeta"></span></div>
+        <div class="bar"><i id="barFill"></i></div>
+        <div class="muted" id="barText"></div>
+        <div class="stats" id="liveStats" style="margin-top:12px"></div>
+        <div class="row">
+          <button id="stopBtn">Stop after current row</button>
+          <button class="danger" id="forceBtn">Force stop</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- recent rows -->
+    <section class="card span2">
+      <h2>Latest rows</h2>
+      <div class="scroll">
+        <table>
+          <thead><tr><th>#</th><th>Account</th><th>Result</th><th>Application</th><th>Detail</th></tr></thead>
+          <tbody id="recent"><tr><td colspan="5" class="muted">No rows yet.</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- csv totals -->
+    <section class="card span2">
+      <h2>CSV totals <span class="muted" id="sumName" style="text-transform:none"></span></h2>
+      <div class="stats" id="sumMain"></div>
+      <p class="note">Finished = on the portal (submitted for approval or approved).
+        Hand work = skipped by the script (not in system, Aadhaar reverify, …).</p>
+      <h2 style="margin-top:22px">Hand work by reason</h2>
+      <table>
+        <thead><tr><th id="resetHead"></th><th>Reason</th><th>Applications</th><th>What to do</th></tr></thead>
+        <tbody id="reasons"><tr><td colspan="4" class="muted">none</td></tr></tbody>
+      </table>
+      <div class="row" id="resetRow" style="display:none">
+        <button id="resetBtn" disabled>Reset ticked to retry</button>
+        <span id="resetMsg" class="muted">IS regular: ticked reasons go back to the next entry run (Status RETRY).</span>
+      </div>
+      <div class="row">
+        <button id="exportBtn">Export error CSVs</button>
+        <a id="dlLink" href="#" style="display:none">Download zip</a>
+        <span id="exportMsg" class="muted"></span>
+      </div>
+      <p class="note">One CSV per reason. Correct <b>Aadhaar No. / Disb. Date / DP</b> or fix the case
+        on the portal, put <b>Y</b> in <b>Fixed (Y)</b>, then upload the file here: those rows are entered on the next run.
+        In Excel keep Account / Aadhaar columns as <b>Text</b>.</p>
+      <div class="row" style="margin-top:4px">
+        <input type="file" id="fixFiles" accept=".csv,text/csv" multiple>
+        <button id="fixBtn" disabled>Upload corrected CSVs</button>
+      </div>
+      <pre id="fixMsg" style="margin-top:8px"></pre>
+      <h2 style="margin-top:22px">By status</h2>
+      <div class="stats" id="sumStats"></div>
+    </section>
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+let csvChoice = null, busy = false;
+
+const GOOD = /^(COMPLETED|APPROVED|DRY_OK|CLAIMED)$/, BAD = /^(ERROR|CHECK_PORTAL|CLAIM_ERROR|CLAIM_CHECK_PORTAL|WRONG_CLAIM)/;
+const tagClass = s => GOOD.test(s) ? "good" : BAD.test(s) ? "bad" :
+  /^(NOT_IN_SYSTEM|NO_|AADHAAR_REVERIFY|APPLICANT_INCOMPLETE|ACCT_NOT|DP_ZERO|ALREADY_ON_PORTAL|SCHEME_MISMATCH|OTHER_BRANCH|NOT_FOUND|CLOSED|MISMATCH|NOT_OURS)/.test(s) ? "warn" : "";
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+const label = s => s.replace(/_/g, " ").toLowerCase();
+
+function kind() { const k = document.querySelector('input[name="kind"]:checked'); return k && k.value; }
+function answer() {
+  if (kind() === "entry") return "yes";                // entry has nothing to confirm (it checks the preview itself)
+  if (CONFIRM[kind()]) return $("approveOk").checked ? "yes" : "";
+  return "";
+}
+const CONFIRM = {
+  approve: ["Yes, approve every application listed as Submitted for the branch", "Approving cannot be undone on the portal."],
+  claim: ["Yes, file IS claims for the branch's approved applications",
+          "Repayment 31-03-2026 · IS = lower of Maximum Allowed Claim and Int Sub Amt · type PARTIAL. Cannot be undone."],
+  claim_approve: ["Yes, approve the Submitted IS claims that the claim job filed",
+                  "Checked on the preview (claim no, IS, dates, not rollover). Others are left for hand. Cannot be undone."],
+  additional: ["Yes, file IS additional (rollover) claims for this branch",
+               "FY 2024-2025 ROLLOVER list · row with start = Disb. Date (±3 days) and end 31/03/2025 · rollover date = Repay. Date (or the portal's last allowed date) · IS = lower of Int Sub Amt and Maximum Allowed Claim. Cannot be undone."],
+  additional_approve: ["Yes, approve the IS additional claims our job filed",
+                       "Checked first against the work list: claim no, start date, rollover date, IS, Is Rollover Claim = Yes, loan FY 2024-2025. Cannot be undone."],
+  pri: ["Yes, file PRI additional claims for this branch",
+        "FY 2024-2025 PRI PENDING list · COMPLETE · start = Disb. Date · end = Repay. Date · Max Withdrawal = MAX(Dis_Amount), or Loan Sanctioned if that is lower · PRI = lower of 3% PRI and Maximum Allowed Claim. Cannot be undone."],
+  prireg: ["Yes, file PRI regular claims for this branch",
+           "FY 2025-2026 PRI PENDING list (loans entered through IS regular) · COMPLETE · start = Disb. Date · end = Repay. Date · Max Withdrawal = portal Loan Sanctioned · PRI = lower of 3% PRI and Maximum Allowed Claim. Cannot be undone."],
+  prireg_approve: ["Yes, approve the PRI regular claims our job filed",
+                   "FY 2025-2026 PRI SUBMITTED list · checked first against the work list: claim no, dates, PRI amount, COMPLETE, loan FY 2025-2026. Cannot be undone."],
+  pri_approve: ["Yes, approve the PRI additional claims our job filed",
+                "FY 2025-2026 PRI SUBMITTED list · checked first against the work list: claim no, dates, PRI amount, COMPLETE, loan FY 2024-2025. Cannot be undone."],
+};
+const isAddList = c => /^branches\/\d+\/additional\/\d+_additional\.csv$/.test(c || "");
+const isPriList = c => /^branches\/\d+\/pri\/\d+_pri\.csv$/.test(c || "");
+const isPriRegList = c => /^branches\/\d+\/prireg\/\d+_prireg\.csv$/.test(c || "");
+const listScheme = c => isPriRegList(c) ? "prireg" : isPriList(c) ? "pri" : isAddList(c) ? "additional" : "regular";
+const SCHEME_NAME = {regular: "IS regular", additional: "IS additional", pri: "PRI additional", prireg: "PRI regular"};
+function scheme() { const s = document.querySelector('input[name="scheme"]:checked'); return s ? s.value : "regular"; }
+let lastKind = null, lastScheme = null;
+function refreshForm(locked) {
+  // the scheme decides which jobs and which work lists can be picked
+  document.querySelectorAll('#startCard .choice[data-scheme]').forEach(l => {
+    const on = l.dataset.scheme === scheme();
+    l.style.display = on ? "" : "none";
+    if (!on) l.querySelector("input").checked = false;
+  });
+  if (scheme() !== lastScheme) {
+    lastScheme = scheme();
+    [...$("csv").options].forEach(o => { o.hidden = !!o.value && listScheme(o.value) !== scheme(); });
+    if ($("csv").value && listScheme($("csv").value) !== scheme()) { $("csv").value = ""; csvChoice = null; }
+  }
+  $("qEntry").classList.toggle("show", kind() === "entry");
+  if (kind() !== lastKind) $("retryReverify").checked = $("onlyReverify").checked = false;   // never carried over
+  if ($("onlyReverify").checked) $("retryReverify").checked = true;
+  $("qApprove").classList.toggle("show", !!CONFIRM[kind()]);
+  if (kind() !== lastKind && CONFIRM[kind()]) {     // a confirmation is never carried over to another job
+    $("approveOk").checked = false; [$("okText").textContent, $("okSmall").textContent] = CONFIRM[kind()];
+  }
+  lastKind = kind();
+  $("startBtn").disabled = locked || !$("csv").value || !kind() || !answer();
+  document.querySelectorAll("#startCard input, #startCard select").forEach(e => e.disabled = locked);
+  $("upBtn").disabled = locked || !$("upFile").files.length;
+}
+document.querySelectorAll("#startCard input").forEach(e => e.addEventListener("change", () => refreshForm(busy)));
+$("csv").addEventListener("change", () => { csvChoice = $("csv").value; poll(); });
+
+async function post(url, body) {
+  const r = await fetch(url, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
+  return r.json();
+}
+$("startBtn").onclick = async () => {
+  $("startErr").textContent = "";
+  const lim = CONFIRM[kind()] ? parseInt($("limitN").value || "0", 10) || 0 : 0;
+  const res = await post("/api/start", {kind: kind(), csv: $("csv").value, answer: answer(), limit: lim,
+                                        retry_reverify: kind() === "entry" && $("retryReverify").checked,
+                                        only_reverify: kind() === "entry" && $("onlyReverify").checked});
+  if (res.error) $("startErr").textContent = res.error;
+  poll();
+};
+$("upFile").addEventListener("change", () => { $("upBtn").disabled = busy || !$("upFile").files.length; $("upMsg").textContent = ""; });
+$("upBtn").onclick = async () => {
+  const file = $("upFile").files[0];
+  if (!file) return;
+  $("upMsg").className = "muted"; $("upMsg").textContent = "uploading…";
+  const res = await post("/api/upload", {name: file.name, text: await file.text()});
+  if (res.error) { $("upMsg").className = "err"; $("upMsg").textContent = res.error; return; }
+  $("upMsg").className = "muted"; $("upMsg").textContent = "saved " + res.csv;
+  $("upFile").value = ""; $("upBtn").disabled = true;
+  csvChoice = res.csv; poll();
+};
+$("resetBtn").onclick = async () => {
+  const reasons = [...document.querySelectorAll('input[name="resetReason"]:checked')].map(x => x.value);
+  if (!reasons.length) return;
+  const n = [...document.querySelectorAll('input[name="resetReason"]:checked')]
+    .reduce((t, x) => t + (parseInt(x.closest("tr").children[2].innerText, 10) || 0), 0);
+  if (!confirm(`Reset ${n} hand-work applications (${reasons.join(", ")}) to RETRY? The next entry run will try them again.`)) return;
+  $("resetMsg").className = "muted"; $("resetMsg").textContent = "resetting…";
+  const r = await post("/api/reset_hand", {csv: $("csv").value, reasons});
+  if (r.error) { $("resetMsg").className = "err"; $("resetMsg").textContent = r.error; return; }
+  $("resetMsg").className = ""; $("resetMsg").textContent = `${r.total} reset to RETRY: ` +
+    Object.entries(r.reset).map(([k, v]) => `${k} ${v}`).join(", ") + ". Start 'Enter applications' to retry them.";
+  document.querySelectorAll('input[name="resetReason"]').forEach(x => x.checked = false);
+  poll();
+};
+$("exportBtn").onclick = async () => {
+  $("exportMsg").className = "muted"; $("exportMsg").textContent = "exporting…";
+  const r = await post("/api/export", {csv: $("csv").value});
+  if (r.error) { $("exportMsg").className = "err"; $("exportMsg").textContent = r.error; return; }
+  $("exportMsg").textContent = `${r.files} files in ${r.folder}`; poll();
+};
+$("fixFiles").addEventListener("change", () => { $("fixBtn").disabled = busy || !$("fixFiles").files.length; });
+$("fixBtn").onclick = async () => {
+  const out = [];
+  for (const file of $("fixFiles").files) {
+    const r = await post("/api/corrections", {csv: $("csv").value, text: await file.text()});
+    if (r.error) { out.push(`${file.name}: ${r.error}`); continue; }
+    out.push(`${file.name}: ${r.applied} rows will be entered again, ${r.not_marked} not marked Y`
+             + (r.problem_count ? `, ${r.problem_count} refused:` : ""));
+    r.problems.forEach(p => out.push("   " + p));
+  }
+  $("fixMsg").textContent = out.join("\n");
+  $("fixFiles").value = ""; $("fixBtn").disabled = true; poll();
+};
+
+// ---- master list ----
+let masterChoice = null;
+// SOL -> branch name, learnt from the masters' branch lists (kept in the browser for next time)
+let branchNames = {};
+try { branchNames = JSON.parse(localStorage.getItem("fasalrinBranches") || "{}"); } catch (e) {}
+function learnBranches(list) {
+  let changed = false;
+  list.forEach(x => { if (x.branch && branchNames[x.sol] !== x.branch) { branchNames[x.sol] = x.branch; changed = true; } });
+  if (changed) {
+    try { localStorage.setItem("fasalrinBranches", JSON.stringify(branchNames)); } catch (e) {}
+    $("csv").innerHTML = "";                         // re-label the work lists on the next status poll
+    poll();
+  }
+}
+const solName = sol => branchNames[sol] ? `${sol} · ${branchNames[sol]}` : `SOL ${sol}`;
+const csvLabel = c => {
+  let m = c.match(/^branches\/(\d+)\/\1\.csv$/);
+  if (m) return `${solName(m[1])} — IS regular work list`;
+  m = c.match(/^branches\/(\d+)\/additional\/\1_additional\.csv$/);
+  if (m) return `${solName(m[1])} — IS additional work list`;
+  m = c.match(/^branches\/(\d+)\/pri\/\1_pri\.csv$/);
+  if (m) return `${solName(m[1])} — PRI additional work list`;
+  m = c.match(/^branches\/(\d+)\/prireg\/\1_prireg\.csv$/);
+  return m ? `${solName(m[1])} — PRI regular work list` : c;
+};
+function mtype() { return scheme(); }              // the master card follows the tab
+
+// ---- the IS regular | IS additional tabs switch the whole dashboard ----
+function setTab(t, save = true) {
+  if (!["regular", "additional", "pri", "prireg"].includes(t)) t = "regular";
+  document.querySelectorAll(".tab").forEach(b => b.setAttribute("aria-selected", String(b.dataset.tab === t)));
+  document.querySelector(`input[name="scheme"][value="${t}"]`).checked = true;
+  document.querySelector(`input[name="mtype"][value="${t}"]`).checked = true;
+  $("masterTitle").textContent = `1 · Master file — ${SCHEME_NAME[t]} (all branches)`;
+  $("startTitle").textContent = `4 · Start — ${SCHEME_NAME[t]}`;
+  pendLabel = {regular: "pending in master", additional: "Int Sub Amt > 0", pri: "3% PRI > 0", prireg: "3% PRI > 0"}[t];
+  solChoice = "";
+  $("mHelp").innerHTML = t === "prireg"
+    ? "Build a branch's PRI regular work list: that SOL's rows with <b>3% PRI &gt; 0</b> (NULL / 0 left out). Claim only: the loan must already be entered and approved through IS regular (<code>branches/&lt;SOL&gt;/prireg/</code>)."
+    : t === "pri"
+    ? "Build a branch's PRI additional work list: that SOL's rows with <b>3% PRI &gt; 0</b> (NULL / 0 left out), compared with the branch's own PRI records (<code>branches/&lt;SOL&gt;/pri/</code>)."
+    : t === "additional"
+    ? "Build a branch's IS additional work list: that SOL's rows with <b>Int Sub Amt &gt; 0</b>, compared with the branch's own IS additional records (<code>branches/&lt;SOL&gt;/additional/</code>)."
+    : "Build a branch's work list: that SOL's <b>Pending</b> rows, compared with the branch's progress file and saved portal reports (kept separately in <code>branches/&lt;SOL&gt;/</code>).";
+  masterChoice = null; csvChoice = null; lastScheme = null;
+  $("buildMsg").textContent = ""; $("mMsg").textContent = ""; $("exportMsg").textContent = ""; $("fixMsg").textContent = "";
+  if (save) { try { localStorage.setItem("fasalrinTab", t); } catch (e) {} }
+  refreshForm(busy); loadMasters(); poll();
+}
+document.querySelectorAll(".tab").forEach(b => b.addEventListener("click", () => setTab(b.dataset.tab)));
+async function loadMasters() {
+  const q = "?type=" + mtype() + (masterChoice ? "&master=" + encodeURIComponent(masterChoice) : "");
+  const r = await (await fetch("/api/masters" + q)).json();
+  const sel = $("master");
+  sel.innerHTML = r.masters.length ? r.masters.map(m => `<option>${esc(m)}</option>`).join("") : '<option value="">no master uploaded</option>';
+  sel.value = r.master || "";
+  sols = r.error ? [] : r.sols;
+  learnBranches(sols);
+  if (r.error) { $("buildMsg").className = "err"; $("buildMsg").textContent = r.error; }
+  const opt = s => `<option value="${esc(s.sol)}">${esc(s.sol)} · ${esc(s.branch)}${s.built ? "  ✓ built" : ""}</option>`;
+  const built = sols.filter(s => s.built), rest = sols.filter(s => !s.built);
+  $("solPick").innerHTML = sols.length
+    ? '<option value="">— pick a branch —</option>'
+      + (built.length ? `<optgroup label="Work list built (${built.length})">${built.map(opt).join("")}</optgroup>` : "")
+      + (rest.length ? `<optgroup label="Not built yet (${rest.length})">${rest.map(opt).join("")}</optgroup>` : "")
+    : '<option value="">Upload the master .xlsx file.</option>';
+  $("solPick").value = sols.some(s => s.sol === solChoice) ? solChoice : "";
+  showSol();
+}
+let sols = [], solChoice = "", pendLabel = "pending in master";
+function showSol() {
+  const s = sols.find(x => x.sol === $("solPick").value);
+  solChoice = s ? s.sol : "";
+  $("buildOne").disabled = busy || !s;
+  $("buildOne").textContent = s && s.built ? "Rebuild" : "Build";
+  if (!s) { $("solInfo").innerHTML = ""; return; }
+  stats($("solInfo"), [["rows in master", s.rows], [pendLabel, s.pending], ["work list", s.built ? "built" : "—"]]);
+}
+$("solPick").addEventListener("change", showSol);
+$("upToggle").onclick = e => { e.preventDefault(); const r = $("upRow"); r.style.display = r.style.display === "none" ? "" : "none"; };
+$("buildOne").onclick = () => { if (solChoice) buildSol(solChoice); };
+async function buildSol(sol) {
+  $("buildMsg").className = "muted"; $("buildMsg").textContent = `building ${sol}…`;
+  const r = await post("/api/build", {master: $("master").value, sol, type: mtype()});
+  if (r.error) { $("buildMsg").className = "err"; $("buildMsg").textContent = r.error; return; }
+  $("buildMsg").className = "";
+  if (r.type === "pri" || r.type === "prireg") {
+    $("buildMsg").innerHTML = `<b>${esc(r.sol)} ${esc(r.branch)}</b> (${r.type === "prireg" ? "PRI regular" : "PRI additional"}): ${r.master_rows} rows in master,
+      ${r.zero_pri} with 3% PRI NULL/0 left out → <b>${r.with_pri} in the work list</b>:
+      ${r.claimed} claimed, ${r.on_portal} already on portal, ${r.skipped} hand work, ${r.errors} errors`
+      + (r.check ? `, ${r.check} check on portal` : "") + `, <b>${r.to_do} to do</b>.`;
+    csvChoice = r.csv.replace(/\\/g, "/"); lastScheme = null;
+    loadMasters(); poll(); return;
+  }
+  if (r.type === "additional") {
+    $("buildMsg").innerHTML = `<b>${esc(r.sol)} ${esc(r.branch)}</b> (IS additional): ${r.master_rows} rows in master,
+      ${r.zero_int_sub} with Int Sub Amt 0 left out → <b>${r.with_int_sub} in the work list</b>:
+      ${r.claimed} claimed, ${r.closed_or_not_found} not found/closed, ${r.errors} errors` + (r.check ? `, ${r.check} check on portal` : "")
+      + `, <b>${r.to_do} to do</b>.`;
+    csvChoice = r.csv.replace(/\\/g, "/"); lastScheme = null;
+    loadMasters(); poll(); return;
+  }
+  lastScheme = null;
+  $("buildMsg").innerHTML = `<b>${esc(r.sol)} ${esc(r.branch)}</b>: ${r.master_pending} Pending in master
+    → <b>${r.to_do} to do</b>, <b>${r.finished} finished</b> (${r.approved} approved, ${r.finished - r.approved} submitted for approval;
+    ${r.on_portal} newly found on portal), ${r.hand} need hand work` + (r.check ? `, ${r.check} check on portal` : "")
+    + (r.other_branch ? `, ${r.other_branch} skipped (other branch account)` : "") + `. Reports: ${esc(r.reports_from)}.`;
+  csvChoice = r.csv.replace(/\\/g, "/"); loadMasters(); poll();
+}
+$("master").addEventListener("change", () => { masterChoice = $("master").value; loadMasters(); });
+$("mFile").addEventListener("change", () => { $("mUpBtn").disabled = !$("mFile").files.length; $("mMsg").textContent = ""; });
+$("mUpBtn").onclick = async () => {
+  const file = $("mFile").files[0];
+  if (!file) return;
+  $("mMsg").className = "muted"; $("mMsg").textContent = "uploading…";
+  const buf = new Uint8Array(await file.arrayBuffer());
+  let bin = ""; for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode.apply(null, buf.subarray(i, i + 0x8000));
+  const r = await post("/api/master_upload", {name: file.name, b64: btoa(bin), type: mtype()});
+  if (r.error) { $("mMsg").className = "err"; $("mMsg").textContent = r.error; return; }
+  $("mMsg").className = "muted"; $("mMsg").textContent = "saved " + r.master;
+  $("mFile").value = ""; $("mUpBtn").disabled = true; masterChoice = r.master; loadMasters();
+};
+let savedTab = "regular";
+try { savedTab = localStorage.getItem("fasalrinTab") || "regular"; } catch (e) {}
+setTab(savedTab, false);
+
+$("stopBtn").onclick = () => post("/api/stop", {force: false}).then(poll);
+$("forceBtn").onclick = () => {
+  if (confirm("Force stop kills the script and its browser right now, even in the middle of a row. Continue?"))
+    post("/api/stop", {force: true}).then(poll);
+};
+
+function stats(el, pairs) {
+  el.innerHTML = pairs.map(([k, v]) => `<div class="stat"><b>${esc(v)}</b><span>${esc(k)}</span></div>`).join("");
+}
+function fmtTime(t) { return t ? new Date(t * 1000).toLocaleTimeString() : ""; }
+
+const STATE_TEXT = {running: "running", login: "waiting for login", stopping: "stopping after this row",
+                    done: "finished", failed: "stopped with an error", stopped: "force-stopped"};
+
+function render(s) {
+  // csv list
+  const sel = $("csv");
+  busy = !!s.job && ["running", "login", "stopping"].includes(s.job.state);
+  if ([...sel.options].map(o => o.value).join("|") !== s.csvs.join("|")) {
+    sel.innerHTML = '<option value="">— pick a work list —</option>'
+      + s.csvs.map(c => `<option value="${esc(c)}">${esc(csvLabel(c))}</option>`).join("");
+    lastScheme = null;                                // re-apply the scheme filter to the new options
+  }
+  // a job running under the other tab: say so (the job card below shows it on both tabs)
+  const live = s.job && ["running", "login", "stopping"].includes(s.job.state);
+  const jobTab = live ? listScheme(s.job.csv) : null;
+  $("otherJob").style.display = live && jobTab !== scheme() ? "" : "none";
+  if (live && jobTab !== scheme())
+    $("otherJob").textContent = `A job is running under ${SCHEME_NAME[jobTab]} — open that tab to start or stop jobs there.`;
+  // never preselect a list: the operator picks it (avoids starting another branch by mistake)
+  sel.value = csvChoice && s.csvs.includes(csvChoice) ? csvChoice : (busy && s.csv ? s.csv : "");
+
+  const j = s.job;
+  busy = !!j && ["running", "login", "stopping"].includes(j.state);
+  refreshForm(busy);
+  $("buildOne").disabled = busy || !solChoice;
+
+  const pill = $("pill"), ban = $("banner");
+  pill.className = "pill " + (j ? j.state : ""); pill.textContent = j ? STATE_TEXT[j.state] : "idle";
+  ban.className = "banner";
+  if (j && j.state === "login") {
+    ban.className = "banner login";
+    ban.textContent = `LOG IN NOW with the ${j.login} login in the Chromium window`;
+  } else if (j && j.state === "done") {
+    ban.className = "banner done"; ban.textContent = `Finished at ${fmtTime(j.ended)}.`;
+  } else if (j && (j.state === "failed" || j.state === "stopped")) {
+    ban.className = "banner " + j.state;
+    ban.textContent = j.state === "stopped" ? "Force-stopped." : `The script stopped with an error (exit ${j.exit}). See Errors.`;
+  }
+
+  // current job
+  $("jobIdle").style.display = j ? "none" : "";
+  $("jobLive").style.display = j ? "" : "none";
+  if (j) {
+    $("jobTitle").textContent = ({entry: "Entering applications", approve: "Approving applications",
+      claim: "Filing IS claims", claim_approve: "Approving IS claims", additional: "Filing IS additional claims",
+      additional_approve: "Approving IS additional claims", pri: "Filing PRI additional claims",
+      pri_approve: "Approving PRI additional claims", prireg: "Filing PRI regular claims",
+      prireg_approve: "Approving PRI regular claims"}[j.kind] || j.kind) + " — " + j.csv;
+    $("jobMeta").textContent = `started ${fmtTime(j.started)}`;
+    const pct = j.total ? Math.min(100, Math.round(100 * j.done / j.total)) : 0;
+    $("barFill").style.width = (j.total ? pct : (busy ? 100 : 0)) + "%";
+    $("barFill").classList.toggle("live", busy);
+    $("barText").textContent = j.total ? `${j.done} of ${j.total} rows (${pct}%)` : `${j.done} done`;
+    const t = Object.entries(j.tally).sort((a, b) => b[1] - a[1]).map(([k, v]) => [label(k), v]);
+    stats($("liveStats"), [["done", j.done], ...t]);
+    $("stopBtn").disabled = !busy || j.state === "stopping";
+    $("forceBtn").disabled = !busy;
+    $("recent").innerHTML = j.results.length ? j.results.map(r => `<tr>
+        <td class="num">${r.n}</td><td class="num">${esc(r.acct)}</td>
+        <td><span class="tag ${tagClass(r.status)}">${esc(label(r.status))}</span></td>
+        <td class="num">${esc(r.app)}</td><td>${esc(r.detail)}</td></tr>`).join("")
+      : '<tr><td colspan="5" class="muted">No rows yet.</td></tr>';
+  }
+
+  // csv totals
+  $("sumName").textContent = s.csv ? "· " + s.csv : "";
+  const sm = s.summary || {}, b = sm.buckets || {};
+  if (["additional", "pri", "prireg"].includes(sm.scheme)) {
+    const a = sm.additional || {};
+    stats($("sumMain"), [["rows", sm.rows ?? 0], ["claimed by us", a.claimed ?? 0], ["· approved", a.approved ?? 0],
+                         ["already on portal", a.on_portal ?? 0],
+                         ["not found / closed", a.not_found_closed ?? 0], ["mismatch", a.mismatch ?? 0],
+                         ["errors", a.errors ?? 0], ["check on portal", a.check ?? 0], ["to do", a.todo ?? 0]]);
+  } else
+  stats($("sumMain"), [["rows", sm.rows ?? 0], ["finished", b.finished ?? 0], ["· approved", b.approved ?? 0],
+                       ["· submitted for approval", b.submitted ?? 0], ["needs hand work", b.hand ?? 0],
+                       ["check on portal", b.check ?? 0], ["to do", b.todo ?? 0],
+                       ["IS claims filed", (sm.claims || {}).filed ?? 0], ["IS claims approved", (sm.claims || {}).approved ?? 0],
+                       ["claims hand work", (sm.claims || {}).hand ?? 0]]
+                       .concat((sm.claims || {}).check ? [["claims check on portal", sm.claims.check]] : []));
+  stats($("sumStats"), Object.entries(sm.status || {}).map(([k, v]) => [label(k), v]));
+  const rs = sm.reasons || [];
+  const canReset = !!s.csv && listScheme(s.csv) === "regular";
+  const NO_RESET = ["CHECK_PORTAL", "OTHER_BRANCH", "ERROR"];
+  const ticked = new Set([...document.querySelectorAll('input[name="resetReason"]:checked')].map(x => x.value));
+  $("resetHead").textContent = canReset ? "Retry" : "";
+  $("reasons").innerHTML = rs.length ? rs.map(r => `<tr><td>${canReset && !NO_RESET.includes(r.reason)
+        ? `<input type="checkbox" name="resetReason" value="${esc(r.reason)}" ${ticked.has(r.reason) ? "checked" : ""}>` : ""}</td>
+      <td>${esc(r.sheet)}</td><td class="num">${r.count}</td>
+      <td class="muted">${esc(r.todo)}</td></tr>`).join("") : '<tr><td colspan="4" class="muted">none</td></tr>';
+  $("resetRow").style.display = canReset && rs.some(r => !NO_RESET.includes(r.reason)) ? "" : "none";
+  document.querySelectorAll('input[name="resetReason"]').forEach(x => x.onchange = () => { $("resetBtn").disabled = busy || !document.querySelector('input[name="resetReason"]:checked'); });
+  $("resetBtn").disabled = busy || !document.querySelector('input[name="resetReason"]:checked');
+  $("exportBtn").disabled = !s.csv || !rs.length;
+  $("dlLink").style.display = sm.export ? "" : "none";
+  $("dlLink").href = "/download?csv=" + encodeURIComponent(s.csv || "");
+  $("dlLink").textContent = sm.export ? `Download zip (exported ${sm.export})` : "Download zip";
+  $("fixBtn").disabled = busy || !$("fixFiles").files.length;
+  lastJobCsv = busy && s.job ? s.job.csv : null;
+  loadReports();
+  refreshRep();
+}
+
+// ---- portal reports of the selected branch work list ----
+let repFor = null, repPick = null;
+async function loadReports(force = false) {
+  const c = $("csv").value;
+  const isBranch = /^branches\//.test(c || "");
+  if (!force && c === repFor) return;
+  repFor = c; repPick = null;
+  $("repMatchMsg").textContent = ""; $("repMsg").textContent = "";
+  $("repFor").textContent = isBranch ? "· " + csvLabel(c) : "";
+  if (!isBranch) {
+    $("repHelp").textContent = "Pick the branch work list above first.";
+    $("repInfo").textContent = "";
+    $("repUpBtn").disabled = $("repMatchBtn").disabled = true;
+    return;
+  }
+  const r = await (await fetch("/api/reports?csv=" + encodeURIComponent(c))).json();
+  if (r.error) { $("repHelp").textContent = r.error; return; }
+  const what = {loan: "Approved Loan Application", "claim IS": "Approved IS Claim", "claim PRI": "Approved PRI Claim"}[r.wants];
+  $("repHelp").innerHTML = `Download the <b>${esc(what)}</b> report from the <b>Branch Head</b> login, upload it here,
+    pick it and press <b>Match</b>.`;
+  $("repInfo").textContent = "";
+  refreshRep();
+}
+function refreshRep() {
+  $("repUpBtn").disabled = !$("repFile").files.length || !repFor;
+  $("repMatchBtn").disabled = !repPick || (busy && lastJobCsv === repFor);
+}
+let lastJobCsv = null;
+$("repFile").addEventListener("change", refreshRep);
+$("repUpBtn").onclick = async () => {
+  const file = $("repFile").files[0];
+  if (!file) return;
+  $("repMsg").className = "muted"; $("repMsg").textContent = "uploading…";
+  const buf = new Uint8Array(await file.arrayBuffer());
+  let bin = ""; for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode.apply(null, buf.subarray(i, i + 0x8000));
+  const r = await post("/api/report_upload", {csv: repFor, name: file.name, b64: btoa(bin)});
+  $("repFile").value = "";
+  if (r.error) { $("repMsg").className = "err"; $("repMsg").textContent = r.error; refreshRep(); return; }
+  $("repMsg").textContent = "";
+  repPick = r.report;
+  const i = r.info, v = r.preview;
+  if (!i || !v) { $("repInfo").textContent = "saved " + r.report + " (restart the panel to see its analysis)"; refreshRep(); return; }
+  $("repInfo").className = "";
+  stats($("repInfo"), [["rows in report", i.rows], ...Object.entries(i.statuses || {}).map(([k, n]) => [k.toLowerCase(), n]),
+    ["in this work list", v.report_rows - v.in_report_not_in_list], ["not in work list", v.in_report_not_in_list],
+    ["already done by us", v.already_done], ["Match will mark", v.marked]]);
+  $("repInfo").insertAdjacentHTML("beforeend", `<p class="note">${esc(r.report)} · press <b>Match</b> to mark the
+    ${v.marked} rows ALREADY_ON_PORTAL (never filed).</p>`);
+  refreshRep();
+};
+$("repMatchBtn").onclick = async () => {
+  if (!repPick) return;
+  $("repMatchMsg").className = "muted"; $("repMatchMsg").textContent = "matching…";
+  const r = await post("/api/report_match", {csv: repFor, report: repPick});
+  if (r.error) { $("repMatchMsg").className = "err"; $("repMatchMsg").textContent = r.error; return; }
+  $("repMatchMsg").className = "";
+  $("repMatchMsg").innerHTML = `<b>${r.marked}</b> marked ALREADY_ON_PORTAL · ${r.already_done} were already done by us / matched before`
+    + ` · report has ${r.report_rows} rows` + (r.in_report_not_in_list ? ` (${r.in_report_not_in_list} accounts not in this work list)` : "");
+  poll();
+};
+
+async function poll() {
+  try {
+    const q = csvChoice ? "?csv=" + encodeURIComponent(csvChoice) : "";
+    render(await (await fetch("/api/status" + q)).json());
+  } catch (e) {
+    $("pill").className = "pill failed"; $("pill").textContent = "panel not reachable";
+  }
+}
+poll();
+setInterval(poll, 2000);
+</script>
+</body>
+</html>
