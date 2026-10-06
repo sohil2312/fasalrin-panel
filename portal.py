@@ -536,7 +536,7 @@ def main():
         if "--no-browser" not in sys.argv:
             webbrowser.open(url)
         return
-    print(f"Fasalrin dashboard: {url}   (Ctrl+C to quit)")
+    print(f"Fasalrin script: {url}   (Ctrl+C to quit)")
     if "--no-browser" not in sys.argv:
         threading.Timer(0.8, lambda: webbrowser.open(url)).start()
     try:
