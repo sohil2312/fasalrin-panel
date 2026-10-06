@@ -34,9 +34,31 @@ DATA_EXT = {".csv", ".xlsx", ".xlsm", ".log", ".zip", ".bak", ".flag"}
 
 
 def get(url: str, timeout=20, accept: str | None = None) -> bytes:
-    req = urllib.request.Request(url, headers={"User-Agent": "fasalrin-updater", **({"Accept": accept} if accept else {})})
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        return r.read()
+    headers = {"User-Agent": "fasalrin-updater", **({"Accept": accept} if accept else {})}
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=timeout) as r:
+            return r.read()
+    except Exception as first:
+        # office / bank networks: an automatic proxy (PAC) or certificate inspection that Python does not follow,
+        # while Windows (and the browser) does - download through Windows instead
+        if os.name != "nt":
+            raise
+        tmp = HERE / "download.tmp"
+        hdr = "; ".join(f"'{k}'='{v}'" for k, v in headers.items())
+        # Windows PowerShell uses the system proxy (incl. automatic proxy scripts) and the Windows certificates
+        ps = (f"$ProgressPreference='SilentlyContinue'; [Net.ServicePointManager]::SecurityProtocol='Tls12'; "
+              f"[Net.WebRequest]::DefaultWebProxy.Credentials=[Net.CredentialCache]::DefaultNetworkCredentials; "
+              f"Invoke-WebRequest -UseBasicParsing -Uri '{url}' -Headers @{{{hdr}}} -OutFile '{tmp}' "
+              f"-TimeoutSec {int(timeout)}")
+        try:
+            r = subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps],
+                               capture_output=True, text=True, timeout=timeout + 30)
+            if r.returncode != 0 or not tmp.exists():
+                raise RuntimeError(f"{type(first).__name__}: {getattr(first, 'reason', first)}; "
+                                   f"Windows download: {(r.stderr or r.stdout).strip().splitlines()[0] if (r.stderr or r.stdout).strip() else 'failed'}")
+            return tmp.read_bytes()
+        finally:
+            tmp.unlink(missing_ok=True)
 
 
 def is_data(rel: str) -> bool:
