@@ -372,9 +372,136 @@
   .sub { display: none; }
   .tabs { margin: 0 auto; }
   .tab { padding: 6px 16px; white-space: nowrap; }
+
+  /* hint chips: a few words + an icon instead of a paragraph. They settle in once (short stagger, strong
+     ease-out) when a tile shows them; nothing loops, nothing moves on the 2-second refresh. */
+  .ic { width: 15px; height: 15px; flex: none; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round;
+        stroke-linejoin: round; vertical-align: -3px; }
+  .hints { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 12px 0 4px; }
+  .hint { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px 3px; border-radius: 999px; font-size: .8rem;
+          font-weight: 600; color: var(--ink); background: var(--sunk); border: 1.5px solid var(--hair); white-space: nowrap;
+          animation: hintIn .32s var(--ease-out) both; animation-delay: calc(var(--i, 0) * 45ms); }
+  .hint b { font-weight: 800; }
+  .hint.warn { background: var(--warn-soft); border-color: transparent; color: var(--warn); }
+  .hints > .ic { color: var(--muted); animation: hintIn .32s var(--ease-out) both; animation-delay: calc(var(--i, 0) * 45ms); }
+  @keyframes hintIn { from { opacity: 0; transform: translateY(4px) scale(.97); } to { opacity: 1; transform: none; } }
+  .choice small .ic { width: 13px; height: 13px; vertical-align: -2px; margin-right: 3px; }
+  .optnote .ic { vertical-align: -3px; }
+  @media (prefers-reduced-motion: reduce) { .hint, .hints > .ic { animation: fadeOnly .2s ease both; } }
+  @keyframes fadeOnly { from { opacity: 0; } to { opacity: 1; } }
+
+  /* ===== bento layer =====
+     Neo-brutalism kept for clarity (ink outline, hard offset shadow, signal-yellow actions), arranged as a bento:
+     tiles of different widths on a 12-column grid, equal heights per row, actions pinned to each tile's bottom.
+     Calm canvas, thinner lines, only the two tiles touched most (Start, Current job) carry a tint.
+     Motion: transform / shadow only, presses respond on pointer-down (<=160 ms, strong ease-out), hover gated
+     to real pointers. Type: negative tracking on large text, tabular digits, hierarchy from weight + size. */
+  :root {
+    --bw: 2px;
+    --r: 20px; --r-sm: 12px;
+    --sh: 4px 4px 0 var(--shadow-c); --sh-sm: 3px 3px 0 var(--shadow-c);
+    --bg: #f1ece3; --dot: rgba(20, 20, 20, .10); --card: #fffaf2; --sunk: #faf4ea;
+    --tint-start: #fff2bf; --tint-job: #ddf2f6;
+    --chrome-bg: rgba(255, 250, 242, .82);
+    --gap: 18px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #181715; --dot: rgba(255, 229, 0, .07); --card: #23211d; --sunk: #1e1c19;
+      --tint-start: #2e2a17; --tint-job: #1b2a2e; --chrome-bg: rgba(35, 33, 29, .82);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #181715; --dot: rgba(255, 229, 0, .07); --card: #23211d; --sunk: #1e1c19;
+    --tint-start: #2e2a17; --tint-job: #1b2a2e; --chrome-bg: rgba(35, 33, 29, .82);
+  }
+  body { background-size: 24px 24px; }
+
+  /* top bar: a translucent material layer the tiles scroll under */
+  .topbar { background: var(--chrome-bg); -webkit-backdrop-filter: blur(14px) saturate(160%); backdrop-filter: blur(14px) saturate(160%);
+            border-width: var(--bw); box-shadow: var(--sh-sm); margin-bottom: var(--gap); }
+  h1 { letter-spacing: -.02em; }
+
+  /* the bento: 12 columns, tiles sized by how much they hold */
+  .grid { grid-template-columns: repeat(12, minmax(0, 1fr)); gap: var(--gap); align-items: stretch; }
+  .grid > section { grid-column: span 6; display: flex; flex-direction: column; }
+  .grid > #masterCard { grid-column: span 5; }
+  .grid > #buildCard { grid-column: span 7; }
+  .grid > #repCard { grid-column: span 12; }
+  .grid > #startCard { grid-column: span 5; background: var(--tint-start); }
+  .grid > #jobCard { grid-column: span 7; background: var(--tint-job); }
+  .grid > section:nth-child(6) { grid-column: span 12; }     /* latest rows */
+  .grid > section:nth-child(7) { grid-column: span 12; }     /* CSV totals: numbers | hand work, side by side */
+  .grid > section:nth-child(6) .scroll { max-height: 300px; }
+  .totcols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 28px; align-items: start; }
+  .totcol > h2 { margin: 18px 0 10px; font-size: .9rem; font-weight: 700; text-transform: none; letter-spacing: 0; }
+  .totcol > h2:first-child { margin-top: 0; }
+  .totcol > h2::before { width: 10px; height: 10px; border-radius: 50%; background: var(--red); border-width: 2px; }
+  .totcol .stats { grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); }
+  @media (max-width: 900px) { .totcols { grid-template-columns: minmax(0, 1fr); } }
+  .grid > section > .row:last-child, #jobLive > .row:last-child { margin-top: auto; padding-top: 16px; }
+  #jobLive { display: flex; flex-direction: column; flex: 1; }
+  @media (max-width: 1040px) {
+    .grid > section, .grid > #masterCard, .grid > #buildCard, .grid > #startCard, .grid > #jobCard,
+    .grid > section:nth-child(6), .grid > section:nth-child(7) { grid-column: span 6; }
+    .grid > #repCard, .grid > section:nth-child(6), .grid > section:nth-child(7) { grid-column: span 12; }
+  }
+  @media (max-width: 760px) {
+    .grid > section, .grid > #masterCard, .grid > #buildCard, .grid > #startCard, .grid > #jobCard { grid-column: span 12; }
+  }
+
+  /* tiles: one outline weight, one shadow, quieter titles */
+  .card { border-width: var(--bw); border-radius: var(--r); box-shadow: var(--sh); padding: 20px 22px; }
+  .card > h2:first-child { font-size: 1.05rem; letter-spacing: -.01em; margin-bottom: 14px; }
+  .card > h2:first-child::before { width: 12px; height: 12px; border-width: 2px; }
+  .card h2:not(:first-child) { font-size: .9rem; margin-top: 20px; }
+  .banner { border-width: var(--bw); border-radius: var(--r); box-shadow: var(--sh-sm); font-size: 1rem; margin-bottom: var(--gap); }
+  .banner.login { font-size: 1.15rem; }
+
+  /* controls and buttons: same outline weight, instant press feedback */
+  select, input[type="number"], .choice, .stat, .scroll, .bar, .tag, input[type="file"]::file-selector-button { border-width: var(--bw); }
+  .choice { transition: border-color .15s ease, background-color .15s ease, box-shadow .16s var(--ease-out), transform .16s var(--ease-out); }
+  .choice:has(input:checked) { transform: translate(-1px, -1px); }
+  button { box-shadow: var(--sh-sm); padding: 8px 18px 7px; font-size: .9rem;
+           transition: transform .16s var(--ease-out), box-shadow .16s var(--ease-out), background-color .15s ease; }
+  button:active:not(:disabled) { transform: translate(3px, 3px); box-shadow: 0 0 0 var(--shadow-c); transition-duration: .08s; }
+  button.primary { font-size: 1rem; padding: 10px 28px 9px; box-shadow: var(--sh); }
+  button.primary:active:not(:disabled) { transform: translate(4px, 4px); }
+
+  /* numbers: tabular, tight, the headline tile first */
+  .stats { gap: 10px; }
+  .stat { box-shadow: none; padding: 10px 12px 8px; }
+  .stat:first-child { box-shadow: var(--sh-sm); }
+  .stat b { font-size: 1.75rem; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+  .stat span { font-size: .8rem; }
+  .bar { box-shadow: none; }
+
+  @media (max-width: 760px) { .card { box-shadow: var(--sh-sm); padding: 16px; } }
+  @media (prefers-reduced-motion: reduce) {
+    button, .choice { transition: background-color .15s ease !important; }
+    button:active:not(:disabled), button.primary:active:not(:disabled), .choice:has(input:checked) { transform: none; }
+  }
+  @media (prefers-reduced-transparency: reduce) { .topbar { background: var(--card); -webkit-backdrop-filter: none; backdrop-filter: none; } }
 </style>
 </head>
 <body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-up" viewBox="0 0 24 24"><path d="M12 16V4m0 0-5 5m5-5 5 5M4 20h16"/></symbol>
+    <symbol id="i-down" viewBox="0 0 24 24"><path d="M12 4v12m0 0-5-5m5 5 5-5M4 20h16"/></symbol>
+    <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></symbol>
+    <symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6z"/><path d="m9 12 2 2 4-4"/></symbol>
+    <symbol id="i-layers" viewBox="0 0 24 24"><path d="m12 3 9 5-9 5-9-5z"/><path d="m3 13 9 5 9-5"/></symbol>
+    <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 3 2 20h20z"/><path d="M12 10v4M12 17h.01"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/></symbol>
+    <symbol id="i-retry" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5"/></symbol>
+    <symbol id="i-hand" viewBox="0 0 24 24"><path d="M8 12V5a1.5 1.5 0 0 1 3 0v6m0-1V4a1.5 1.5 0 0 1 3 0v6m0-1V6a1.5 1.5 0 0 1 3 0v8a7 7 0 0 1-12 5l-3-4a1.5 1.5 0 0 1 2.4-1.8L8 15"/></symbol>
+    <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></symbol>
+    <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14m-5-5 5 5-5 5"/></symbol>
+  </defs>
+</svg>
 <div class="wrap">
   <div class="topbar">
   <header>
@@ -420,14 +547,15 @@
         <button id="mUpBtn" disabled>Upload master</button>
         <span id="mMsg" class="muted"></span>
       </div>
-      <p class="note">Upload the master .xlsx of <b>all branches</b> once; pick the newest one above.</p>
+      <div class="hints"><span class="hint" style="--i:0"><svg class="ic"><use href="#i-up"/></svg><span>Upload once</span></span>
+        <span class="hint" style="--i:1"><svg class="ic"><use href="#i-layers"/></svg><span>All branches</span></span>
+        <span class="hint" style="--i:2"><svg class="ic"><use href="#i-check"/></svg><span>Newest on top</span></span></div>
     </section>
 
     <!-- step 2: one branch at a time: pick it, see its counts, build its work list -->
     <section class="card" id="buildCard">
       <h2>2 · Build branch work list</h2>
-      <p class="note" id="mHelp">Build a branch's work list: that SOL's <b>Pending</b> rows, compared with the
-        branch's progress file and saved portal reports (kept separately in <code>branches/&lt;SOL&gt;/</code>).</p>
+      <div class="hints" id="mHelp"></div>
       <label for="solPick">Branch</label>
       <div class="row solrow" style="margin-top:0">
         <select id="solPick"><option value="">Upload the master .xlsx file.</option></select>
@@ -446,7 +574,7 @@
         <button id="repUpBtn" disabled>Upload report</button>
         <button class="primary" id="repMatchBtn" disabled>Match</button>
       </div>
-      <p class="note" id="repHelp" style="margin:8px 0 0">Pick the branch work list above first.</p>
+      <div class="hints" id="repHelp"></div>
       <span id="repMsg" class="muted"></span>
       <div id="repInfo" class="muted" style="margin-top:8px"></div>
       <div id="repMatchMsg" class="muted" style="margin-top:6px"></div>
@@ -455,7 +583,7 @@
         <button id="upBtn" disabled>Upload CSV</button>
         <span id="upMsg" class="muted"></span>
       </div>
-      <div class="optnote"><span><b>Optional</b> — no report? The CSV progress file is used.</span>
+      <div class="optnote"><span><svg class="ic"><use href="#i-info"/></svg> <b>Optional</b> · no report = progress file</span>
         <a href="#" id="upToggle">Upload a work list CSV instead</a></div>
     </section>
 
@@ -476,42 +604,41 @@
       <label>Job</label>
       <div class="choices">
         <label class="choice" data-scheme="regular"><input type="radio" name="kind" value="entry">Enter applications
-          <small>Log in with the Branch User login</small></label>
+          <small><svg class="ic"><use href="#i-user"/></svg>Branch User</small></label>
         <label class="choice" data-scheme="regular"><input type="radio" name="kind" value="approve">Approve applications
-          <small>Log in with the Branch Head login</small></label>
+          <small><svg class="ic"><use href="#i-shield"/></svg>Branch Head</small></label>
         <label class="choice" data-scheme="regular"><input type="radio" name="kind" value="claim">File IS claims
-          <small>Approved loans · Branch User login</small></label>
+          <small><svg class="ic"><use href="#i-user"/></svg>Branch User · approved loans</small></label>
         <label class="choice" data-scheme="regular"><input type="radio" name="kind" value="claim_approve">Approve IS claims
-          <small>Claims we filed · Branch Head login</small></label>
+          <small><svg class="ic"><use href="#i-shield"/></svg>Branch Head · our claims</small></label>
         <label class="choice" data-scheme="additional"><input type="radio" name="kind" value="additional">File IS additional claims
-          <small>Rollover · Branch User login</small></label>
+          <small><svg class="ic"><use href="#i-user"/></svg>Branch User · rollover</small></label>
         <label class="choice" data-scheme="additional"><input type="radio" name="kind" value="additional_approve">Approve IS additional claims
-          <small>Rollover claims we filed · Branch Head login</small></label>
+          <small><svg class="ic"><use href="#i-shield"/></svg>Branch Head · our claims</small></label>
         <label class="choice" data-scheme="pri"><input type="radio" name="kind" value="pri">File PRI additional claims
-          <small>FY 2024-25 PENDING · Branch User login</small></label>
+          <small><svg class="ic"><use href="#i-user"/></svg>Branch User · FY 24-25</small></label>
         <label class="choice" data-scheme="pri"><input type="radio" name="kind" value="pri_approve">Approve PRI additional claims
-          <small>PRI claims we filed · Branch Head login</small></label>
+          <small><svg class="ic"><use href="#i-shield"/></svg>Branch Head · our claims</small></label>
         <label class="choice" data-scheme="prireg"><input type="radio" name="kind" value="prireg">File PRI regular claims
-          <small>FY 2025-26 PENDING · Branch User login</small></label>
+          <small><svg class="ic"><use href="#i-user"/></svg>Branch User · FY 25-26</small></label>
         <label class="choice" data-scheme="prireg"><input type="radio" name="kind" value="prireg_approve">Approve PRI regular claims
-          <small>PRI regular claims we filed · Branch Head login</small></label>
+          <small><svg class="ic"><use href="#i-shield"/></svg>Branch Head · our claims</small></label>
       </div>
 
       <div class="q" id="qEntry">
         <label class="choice" style="margin-top:12px"><input type="checkbox" id="retryReverify">
           Retry Aadhaar-reverify rows once
-          <small>Every AADHAAR_REVERIFY row not retried before goes into this run once more (after the new rows); if the
-            portal still asks to reverify, it stays hand work for good ("retried once").</small></label>
+          <small><svg class="ic"><use href="#i-retry"/></svg>One more try · then hand work</small></label>
         <label class="choice" style="margin-top:8px"><input type="checkbox" id="onlyReverify">
           Only those rows this run
-          <small>Do just the Aadhaar-reverify retries now; new rows wait for a later run.</small></label>
+          <small><svg class="ic"><use href="#i-arrow"/></svg>New rows wait</small></label>
       </div>
       <div class="q" id="qApprove">
         <label class="choice" style="margin-top:12px"><input type="checkbox" id="approveOk">
           <span id="okText">Yes, approve every application listed as Submitted for the branch</span>
-          <small id="okSmall">Approving cannot be undone on the portal.</small></label>
+          <small id="okSmall">⚠ Can't be undone</small></label>
         <label for="limitN">At most <input type="number" id="limitN" class="limit" min="1" step="1" placeholder="all">
-          this run <small class="muted">(optional, e.g. 2 for a first test; empty = all)</small></label>
+          this run <small class="muted">· empty = all · 2 = test</small></label>
       </div>
 
       <div class="row">
@@ -550,33 +677,42 @@
     <!-- csv totals -->
     <section class="card span2">
       <h2>CSV totals <span class="muted" id="sumName" style="text-transform:none"></span></h2>
-      <div class="stats" id="sumMain"></div>
-      <p class="note">Finished = on the portal (submitted for approval or approved).
-        Hand work = skipped by the script (not in system, Aadhaar reverify, …).</p>
-      <h2 style="margin-top:22px">Hand work by reason</h2>
-      <table>
-        <thead><tr><th id="resetHead"></th><th>Reason</th><th>Applications</th><th>What to do</th></tr></thead>
-        <tbody id="reasons"><tr><td colspan="4" class="muted">none</td></tr></tbody>
-      </table>
-      <div class="row" id="resetRow" style="display:none">
-        <button id="resetBtn" disabled>Reset ticked to retry</button>
-        <span id="resetMsg" class="muted">IS regular: ticked reasons go back to the next entry run (Status RETRY).</span>
+      <div class="totcols">
+        <div class="totcol">
+          <div class="stats" id="sumMain"></div>
+          <div class="hints"><span class="hint" style="--i:0"><svg class="ic"><use href="#i-check"/></svg><span><b>Finished</b> = on portal</span></span>
+            <span class="hint" style="--i:1"><svg class="ic"><use href="#i-hand"/></svg><span><b>Hand work</b> = skipped</span></span></div>
+          <h2>By status</h2>
+          <div class="stats" id="sumStats"></div>
+        </div>
+        <div class="totcol">
+          <h2>Hand work by reason</h2>
+          <table>
+            <thead><tr><th id="resetHead"></th><th>Reason</th><th>Applications</th><th>What to do</th></tr></thead>
+            <tbody id="reasons"><tr><td colspan="4" class="muted">none</td></tr></tbody>
+          </table>
+          <div class="row" id="resetRow" style="display:none">
+            <button id="resetBtn" disabled>Reset ticked to retry</button>
+            <span id="resetMsg" class="muted">Ticked → retry next run</span>
+          </div>
+          <div class="row">
+            <button id="exportBtn">Export error CSVs</button>
+            <a id="dlLink" href="#" style="display:none">Download zip</a>
+            <span id="exportMsg" class="muted"></span>
+          </div>
+          <div class="hints"><span class="hint" style="--i:0"><svg class="ic"><use href="#i-down"/></svg><span>Export</span></span>
+            <svg class="ic" style="--i:1"><use href="#i-arrow"/></svg>
+            <span class="hint" style="--i:2"><svg class="ic"><use href="#i-file"/></svg><span>Fix · <b>Y</b> in Fixed (Y)</span></span>
+            <svg class="ic" style="--i:3"><use href="#i-arrow"/></svg>
+            <span class="hint" style="--i:4"><svg class="ic"><use href="#i-up"/></svg><span>Upload back</span></span>
+            <span class="hint warn" style="--i:5"><svg class="ic"><use href="#i-alert"/></svg><span>Account / Aadhaar as Text</span></span></div>
+          <div class="row" style="margin-top:4px">
+            <input type="file" id="fixFiles" accept=".csv,text/csv" multiple>
+            <button id="fixBtn" disabled>Upload corrected CSVs</button>
+          </div>
+          <pre id="fixMsg" style="margin-top:8px"></pre>
+        </div>
       </div>
-      <div class="row">
-        <button id="exportBtn">Export error CSVs</button>
-        <a id="dlLink" href="#" style="display:none">Download zip</a>
-        <span id="exportMsg" class="muted"></span>
-      </div>
-      <p class="note">One CSV per reason. Correct <b>Aadhaar No. / Disb. Date / DP</b> or fix the case
-        on the portal, put <b>Y</b> in <b>Fixed (Y)</b>, then upload the file here: those rows are entered on the next run.
-        In Excel keep Account / Aadhaar columns as <b>Text</b>.</p>
-      <div class="row" style="margin-top:4px">
-        <input type="file" id="fixFiles" accept=".csv,text/csv" multiple>
-        <button id="fixBtn" disabled>Upload corrected CSVs</button>
-      </div>
-      <pre id="fixMsg" style="margin-top:8px"></pre>
-      <h2 style="margin-top:22px">By status</h2>
-      <div class="stats" id="sumStats"></div>
     </section>
   </div>
 </div>
@@ -597,24 +733,29 @@ function answer() {
   if (CONFIRM[kind()]) return $("approveOk").checked ? "yes" : "";
   return "";
 }
-const CONFIRM = {
-  approve: ["Yes, approve every application listed as Submitted for the branch", "Approving cannot be undone on the portal."],
+function hints(items) {
+  return items.map((x, i) => x === "→"
+    ? `<svg class="ic" style="--i:${i}" aria-hidden="true"><use href="#i-arrow"/></svg>`
+    : `<span class="hint ${x[2] || ""}" style="--i:${i}"><svg class="ic" aria-hidden="true"><use href="#${x[0]}"/></svg><span>${x[1]}</span></span>`).join("");
+}
+const CONFIRM = {   // [tick-box label, short reminder]
+  approve: ["Yes, approve every application listed as Submitted for the branch", "⚠ Can't be undone"],
   claim: ["Yes, file IS claims for the branch's approved applications",
-          "Repayment 31-03-2026 · IS = lower of Maximum Allowed Claim and Int Sub Amt · type PARTIAL. Cannot be undone."],
+          "IS = lower of max claim / Int Sub Amt · ⚠ Can't be undone"],
   claim_approve: ["Yes, approve the Submitted IS claims that the claim job filed",
-                  "Checked on the preview (claim no, IS, dates, not rollover). Others are left for hand. Cannot be undone."],
+                  "Preview checked first · ⚠ Can't be undone"],
   additional: ["Yes, file IS additional (rollover) claims for this branch",
-               "FY 2024-2025 ROLLOVER list · row with start = Disb. Date (±3 days) and end 31/03/2025 · rollover date = Repay. Date (or the portal's last allowed date) · IS = lower of Int Sub Amt and Maximum Allowed Claim. Cannot be undone."],
+               "Rollover = Repay. Date · IS = lower · ⚠ Can't be undone"],
   additional_approve: ["Yes, approve the IS additional claims our job filed",
-                       "Checked first against the work list: claim no, start date, rollover date, IS, Is Rollover Claim = Yes, loan FY 2024-2025. Cannot be undone."],
+                       "Checked vs work list · ⚠ Can't be undone"],
   pri: ["Yes, file PRI additional claims for this branch",
-        "FY 2024-2025 PRI PENDING list · COMPLETE · start = Disb. Date · end = Repay. Date · Max Withdrawal = MAX(Dis_Amount), or Loan Sanctioned if that is lower · PRI = lower of 3% PRI and Maximum Allowed Claim. Cannot be undone."],
+        "Disb → Repay · PRI = lower · ⚠ Can't be undone"],
   prireg: ["Yes, file PRI regular claims for this branch",
-           "FY 2025-2026 PRI PENDING list (loans entered through IS regular) · COMPLETE · start = Disb. Date · end = Repay. Date · Max Withdrawal = portal Loan Sanctioned · PRI = lower of 3% PRI and Maximum Allowed Claim. Cannot be undone."],
+           "Disb → Repay · PRI = lower · ⚠ Can't be undone"],
   prireg_approve: ["Yes, approve the PRI regular claims our job filed",
-                   "FY 2025-2026 PRI SUBMITTED list · checked first against the work list: claim no, dates, PRI amount, COMPLETE, loan FY 2025-2026. Cannot be undone."],
+                   "Checked vs work list · ⚠ Can't be undone"],
   pri_approve: ["Yes, approve the PRI additional claims our job filed",
-                "FY 2025-2026 PRI SUBMITTED list · checked first against the work list: claim no, dates, PRI amount, COMPLETE, loan FY 2024-2025. Cannot be undone."],
+                "Checked vs work list · ⚠ Can't be undone"],
 };
 const isAddList = c => /^branches\/\d+\/additional\/\d+_additional\.csv$/.test(c || "");
 const isPriList = c => /^branches\/\d+\/pri\/\d+_pri\.csv$/.test(c || "");
@@ -745,13 +886,11 @@ function setTab(t, save = true) {
   $("startTitle").textContent = `4 · Start — ${SCHEME_NAME[t]}`;
   pendLabel = {regular: "pending in master", additional: "Int Sub Amt > 0", pri: "3% PRI > 0", prireg: "3% PRI > 0"}[t];
   solChoice = "";
-  $("mHelp").innerHTML = t === "prireg"
-    ? "Build a branch's PRI regular work list: that SOL's rows with <b>3% PRI &gt; 0</b> (NULL / 0 left out). Claim only: the loan must already be entered and approved through IS regular (<code>branches/&lt;SOL&gt;/prireg/</code>)."
-    : t === "pri"
-    ? "Build a branch's PRI additional work list: that SOL's rows with <b>3% PRI &gt; 0</b> (NULL / 0 left out), compared with the branch's own PRI records (<code>branches/&lt;SOL&gt;/pri/</code>)."
-    : t === "additional"
-    ? "Build a branch's IS additional work list: that SOL's rows with <b>Int Sub Amt &gt; 0</b>, compared with the branch's own IS additional records (<code>branches/&lt;SOL&gt;/additional/</code>)."
-    : "Build a branch's work list: that SOL's <b>Pending</b> rows, compared with the branch's progress file and saved portal reports (kept separately in <code>branches/&lt;SOL&gt;/</code>).";
+  $("mHelp").innerHTML = hints([
+    ["i-file", {regular: "<b>Pending</b> rows", additional: "<b>Int Sub Amt</b> &gt; 0", pri: "<b>3% PRI</b> &gt; 0",
+                prireg: "<b>3% PRI</b> &gt; 0"}[t]],
+    ["i-check", "Progress kept"],
+    ...(t === "prireg" ? [["i-alert", "Loan via IS regular first", "warn"]] : [])]);
   masterChoice = null; csvChoice = null; lastScheme = null;
   $("buildMsg").textContent = ""; $("mMsg").textContent = ""; $("exportMsg").textContent = ""; $("fixMsg").textContent = "";
   if (save) { try { localStorage.setItem("fasalrinTab", t); } catch (e) {} }
@@ -958,7 +1097,7 @@ async function loadReports(force = false) {
   $("repMatchMsg").textContent = ""; $("repMsg").textContent = "";
   $("repFor").textContent = isBranch ? "· " + csvLabel(c) : "";
   if (!isBranch) {
-    $("repHelp").textContent = "Pick the branch work list above first.";
+    $("repHelp").innerHTML = hints([["i-arrow", "Pick a branch first"]]);
     $("repInfo").textContent = "";
     $("repUpBtn").disabled = $("repMatchBtn").disabled = true;
     return;
@@ -966,8 +1105,8 @@ async function loadReports(force = false) {
   const r = await (await fetch("/api/reports?csv=" + encodeURIComponent(c))).json();
   if (r.error) { $("repHelp").textContent = r.error; return; }
   const what = {loan: "Approved Loan Application", "claim IS": "Approved IS Claim", "claim PRI": "Approved PRI Claim"}[r.wants];
-  $("repHelp").innerHTML = `Download the <b>${esc(what)}</b> report from the <b>Branch Head</b> login, upload it here,
-    pick it and press <b>Match</b>.`;
+  $("repHelp").innerHTML = hints([["i-shield", "Branch Head"], ["i-down", `<b>${esc(what)}</b> report`], "→",
+                                  ["i-up", "Upload"], "→", ["i-link", "Match"]]);
   $("repInfo").textContent = "";
   refreshRep();
 }
@@ -994,8 +1133,8 @@ $("repUpBtn").onclick = async () => {
   stats($("repInfo"), [["rows in report", i.rows], ...Object.entries(i.statuses || {}).map(([k, n]) => [k.toLowerCase(), n]),
     ["in this work list", v.report_rows - v.in_report_not_in_list], ["not in work list", v.in_report_not_in_list],
     ["already done by us", v.already_done], ["Match will mark", v.marked]]);
-  $("repInfo").insertAdjacentHTML("beforeend", `<p class="note">${esc(r.report)} · press <b>Match</b> to mark the
-    ${v.marked} rows ALREADY_ON_PORTAL (never filed).</p>`);
+  $("repInfo").insertAdjacentHTML("beforeend", `<div class="hints">${hints([["i-file", esc(r.report)], "→",
+    ["i-link", `Match → <b>${v.marked}</b> already on portal`]])}</div>`);
   refreshRep();
 };
 $("repMatchBtn").onclick = async () => {
