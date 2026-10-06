@@ -62,11 +62,17 @@ def missing_libs(req: str) -> list[str]:
 
 
 def main() -> int:
-    try:
-        latest = get(f"https://api.github.com/repos/{REPO}/commits/{BRANCH}", 10,
-                     "application/vnd.github.sha").decode().strip()
-    except Exception as e:
-        print(f"[update] no update check ({type(e).__name__}) - starting with the current version")
+    latest = ""
+    for attempt in range(3):                       # slow / flaky internet: try a few times before giving up
+        try:
+            latest = get(f"https://api.github.com/repos/{REPO}/commits/{BRANCH}", 25,
+                         "application/vnd.github.sha").decode().strip()
+            break
+        except Exception as e:
+            why = f"{type(e).__name__}: {getattr(e, 'reason', e)}"
+            print(f"[update] check failed (try {attempt + 1}/3): {why}")
+    if not latest:
+        print("[update] no update check - starting with the current version")
         return 0
     have = VERSION.read_text().strip() if VERSION.exists() else ""
     if latest == have:
