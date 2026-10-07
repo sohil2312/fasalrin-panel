@@ -117,6 +117,31 @@ def save_master(name: str, b64: str, kind: str = "regular") -> tuple[str | None,
     return None, dest.name
 
 
+def csv_to_xlsx(name: str, b64: str) -> tuple[str, str]:
+    """IS fresh upload as CSV -> (xlsx name, xlsx base64). Every cell stays text (long numbers intact)."""
+    import base64
+    import io
+    import openpyxl
+    raw = base64.b64decode(b64, validate=True)
+    if len(raw) > MAX_UPLOAD:
+        raise ValueError("file too large")
+    text = raw.decode("utf-8-sig", errors="replace")
+    rows = [r for r in csv.reader(io.StringIO(text)) if any(c.strip() for c in r)]
+    if len(rows) < 2:
+        raise ValueError("the CSV has no data rows")
+    head = [h.strip() for h in rows[0]]
+    for col in ("Account No.", "Aadhaar No."):
+        if col in head and any("E+" in (r[head.index(col)] if head.index(col) < len(r) else "").upper() for r in rows[1:]):
+            raise ValueError(f"{col} looks like 9.99E+13 (Excel changed the numbers): format the column as Text and save again")
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    for r in rows:
+        ws.append([c.strip() for c in r])
+    buf = io.BytesIO()
+    wb.save(buf)
+    return os.path.splitext(os.path.basename(name))[0] + ".xlsx", base64.b64encode(buf.getvalue()).decode()
+
+
 REQUIRED_COLS = ("Account No.", "Aadhaar No.", "Disb. Date", "DP")
 MAX_UPLOAD = 20 * 1024 * 1024
 
@@ -380,6 +405,14 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path in ("/", "/index.html"):
             self._send(200, (ROOT / "portal.html").read_bytes(), "text/html; charset=utf-8")
+        elif self.path == "/sample/fresh.csv":          # IS fresh: headings + dummy rows to fill in
+            data = (ROOT / "samples" / "is_fresh_sample.csv").read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/csv; charset=utf-8")
+            self.send_header("Content-Disposition", 'attachment; filename="is_fresh_sample.csv"')
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
         elif self.path.startswith("/download"):
             from urllib.parse import unquote
             q = dict(x.split("=", 1) for x in self.path.partition("?")[2].split("&") if "=" in x)
@@ -474,7 +507,13 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/api/fresh_upload":         # IS fresh: the branch's own file -> its work list directly
             if running():
                 return self._send(400, {"error": "stop the running job first"})
-            err, saved = save_master(body.get("name", ""), body.get("b64", ""), "fresh")
+            name, b64 = body.get("name", ""), body.get("b64", "")
+            if name.lower().endswith(".csv"):            # a CSV is kept as an .xlsx (all cells text)
+                try:
+                    name, b64 = csv_to_xlsx(name, b64)
+                except ValueError as e:
+                    return self._send(400, {"error": str(e)[:200]})
+            err, saved = save_master(name, b64, "fresh")
             if err:
                 return self._send(400, {"error": err})
             path = MASTER_DIRS["fresh"] / saved

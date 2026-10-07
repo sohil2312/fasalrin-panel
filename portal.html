@@ -573,13 +573,15 @@
       <h2><span id="repTitle">3 · Select branch &amp; match approved report</span> <span class="muted" id="repFor"></span></h2>
       <div id="freshUp" style="display:none">
         <div class="row inline3" style="margin-top:0">
-          <input type="file" id="fFile" accept=".xlsx" aria-label="Branch file">
+          <input type="file" id="fFile" accept=".xlsx,.csv" aria-label="Branch file">
           <button class="buildBtn" id="fUpBtn" disabled>Upload branch file</button>
+          <a href="/sample/fresh.csv" download="is_fresh_sample.csv"><svg class="ic" aria-hidden="true"><use href="#i-down"/></svg> Sample file</a>
           <span id="fMsg" class="muted"></span>
         </div>
-        <div class="hints"><span class="hint" style="--i:0"><svg class="ic"><use href="#i-file"/></svg><span>One branch's .xlsx</span></span>
+        <div class="hints"><span class="hint" style="--i:0"><svg class="ic"><use href="#i-file"/></svg><span>One branch · .xlsx or .csv</span></span>
           <span class="hint" style="--i:1"><svg class="ic"><use href="#i-check"/></svg><span>Progress kept on re-upload</span></span>
-          <span class="hint warn" style="--i:2"><svg class="ic"><use href="#i-alert"/></svg><span>Crop rows need LAND AREA</span></span></div>
+          <span class="hint warn" style="--i:2"><svg class="ic"><use href="#i-alert"/></svg><span>Crop rows need LAND</span></span>
+          <span class="hint warn" style="--i:3"><svg class="ic"><use href="#i-alert"/></svg><span>Account / Aadhaar as Text</span></span></div>
         <h2 style="margin-top:18px">Work list &amp; approved report (optional)</h2>
       </div>
       <div class="row inline3" style="margin-top:0">

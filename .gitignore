@@ -29,3 +29,6 @@ excel_utility/_build/
 dist/
 # clone of the public code-only repo (deploy/publish_public.py)
 .public_repo/
+
+# dummy sample files for the panel (no real data)
+!samples/*.csv
