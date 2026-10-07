@@ -319,6 +319,78 @@ def is_prireg_list(csv_path) -> bool:
     return p.parent.name == "prireg" and p.stem.endswith("_prireg")
 
 
+# ----------------------------------------------------------------------------
+# IS fresh (farmers the portal does not know yet, entered from scratch): own Excel ("not in system"),
+# work lists branches/<SOL>/fresh/<SOL>_fresh.csv, progress in <SOL>_fresh_progress.csv (fasalrin_fresh.py)
+# ----------------------------------------------------------------------------
+FRESH_REQUIRED = ["Sol ID", "Branch Name", f.COL_ACCT, "Scheme Code", f.COL_DISB, f.COL_DP, f.COL_AADH, "DOB",
+                  "NAME AS PER ADHAR", "GENDER", "RELATIVE NAME", "ADDRESS", "VILLAGE"]
+
+
+def is_fresh_list(csv_path) -> bool:
+    p = Path(csv_path)
+    return p.parent.name == "fresh" and p.stem.endswith("_fresh")
+
+
+def fresh_path(sol: str) -> Path:
+    return BRANCHES / str(sol).strip() / "fresh" / f"{str(sol).strip()}_fresh.csv"
+
+
+def sols_fresh(master) -> list[dict]:
+    """[{sol, branch, rows, pending (= rows: every row is a new farmer), built}] for the fresh Excel."""
+    out = {}
+    for r in read_master(master, FRESH_REQUIRED):
+        s = out.setdefault(r["Sol ID"], {"sol": r["Sol ID"], "branch": r["Branch Name"], "rows": 0, "pending": 0})
+        s["rows"] += 1
+        s["pending"] += 1
+    for s in out.values():
+        s["built"] = fresh_path(s["sol"]).exists()
+    return sorted(out.values(), key=lambda s: s["sol"])
+
+
+def _fresh_rows(csv_path) -> list[dict]:
+    """Fresh work-list rows with Status / Loan App No / Detail from the progress file (it wins over the CSV)."""
+    import fasalrin_fresh as ff
+    with open(csv_path, newline="", encoding="utf-8-sig") as fh:
+        rows = list(csv.DictReader(fh))
+    rec = ff.progress_records(csv_path)
+    for r in rows:
+        e = rec.get((r.get(f.COL_ACCT) or "").strip())
+        if e:
+            r.update(e)
+    return rows
+
+
+def fresh_bucket(status: str) -> str:
+    import fasalrin_fresh as ff
+    s = (status or "").strip().upper()
+    if s in ("COMPLETED", "ALREADY_ON_PORTAL"):
+        return "finished"
+    if s.startswith(ff.HOLD):
+        return "check"
+    if s in ff.HAND:
+        return "hand"
+    return "error" if s.startswith("ERROR") else "todo"
+
+
+def build_fresh(master, sol: str) -> dict:
+    """branches/<SOL>/fresh/<SOL>_fresh.csv = that SOL's rows of the fresh Excel, keeping the progress made."""
+    import fasalrin_fresh as ff
+    sol = str(sol).strip()
+    rows = [r for r in read_master(master, FRESH_REQUIRED) if r["Sol ID"] == sol]
+    if not rows:
+        raise ValueError(f"SOL {sol} has no rows in this file")
+    path = fresh_path(sol)
+    ff.write_worklist(path, rows)
+    done = collections.Counter(fresh_bucket(r.get("Status") or "") for r in _fresh_rows(path))
+    area = ff.area_column(list(rows[0]))
+    return {"csv": str(path.relative_to(ROOT)), "sol": sol, "branch": rows[0]["Branch Name"], "master_rows": len(rows),
+            "cc004": sum(1 for r in rows if r.get("Scheme Code", "").upper() == "CC004"),
+            "cc043": sum(1 for r in rows if r.get("Scheme Code", "").upper() == "CC043"),
+            "area_col": area or "", "finished": done["finished"], "hand": done["hand"], "check": done["check"],
+            "errors": done["error"], "to_do": done["todo"]}
+
+
 def pri_key(acct, disb) -> str:
     return f"{str(acct).strip()}|{str(disb).strip()}"
 
@@ -419,7 +491,9 @@ def _pri_rows(csv_path) -> list[dict]:
 
 
 def scheme_of(csv_path) -> str:
-    """'pri' / 'additional' / 'regular' for a work list path."""
+    """'fresh' / 'prireg' / 'pri' / 'additional' / 'regular' for a work list path."""
+    if is_fresh_list(csv_path):
+        return "fresh"
     if is_prireg_list(csv_path):
         return "prireg"
     return "pri" if is_pri_list(csv_path) else "additional" if is_additional_list(csv_path) else "regular"
@@ -429,7 +503,7 @@ def branch_names(sol: str) -> set[str]:
     """Every Branch Name this SOL has in any of its work lists (masters spell some names differently,
     e.g. KIDIYA / Kidia; the portal says KIDIA) - for the login branch check by SOL."""
     names = set()
-    for p in (worklist_path(sol), additional_path(sol), pri_path(sol), pri_path(sol, "prireg")):
+    for p in (worklist_path(sol), additional_path(sol), pri_path(sol), pri_path(sol, "prireg"), fresh_path(sol)):
         if p.exists():
             with open(p, newline="", encoding="utf-8-sig") as fh:
                 for r in csv.DictReader(fh):
@@ -481,7 +555,22 @@ PRI_REASONS = [   # PRI additional work lists
 ]
 
 
+FRESH_REASONS = [   # IS fresh work lists
+    ("EXISTS_ON_PORTAL",     "Already on portal",   "FETCH found this Aadhaar: the farmer exists - use IS regular entry or check by hand"),
+    ("VERIFY_FAILED",        "Aadhaar verify failed", "Aadhaar VERIFY did not pass with NAME AS PER ADHAR: correct the name in the Excel"),
+    ("VILLAGE_NOT_FOUND",    "Village not found",   "VILLAGE is not (or not uniquely) in the portal's Kadana list: correct it in the Excel"),
+    ("NO_LAND",              "No land details",     "Crop loan (CC004) needs SURVEY NO, KHATA NO and land area in the Excel"),
+    ("BAD_DATA",             "Bad data",            "Aadhaar / dates / DP / village 'CHECK' wrong in the Excel: correct it and upload again"),
+    ("SCHEME_UNKNOWN",       "Unknown scheme",      "Scheme Code is not CC004 / CC043"),
+    ("APPLICANT_INCOMPLETE", "Applicant incomplete", "Applicant tab refused the data (see Detail)"),
+    ("CHECK_PORTAL",         "Check on portal",     "Stopped after a save or after CONFIRM: check the portal (a draft may exist)"),
+    ("ERROR",                "Errors (retried)",    "Script error before anything was saved; the next run tries again"),
+]
+
+
 def reasons_for(csv_path):
+    if is_fresh_list(csv_path):
+        return FRESH_REASONS
     return PRI_REASONS if is_pri_list(csv_path) else ADD_REASONS if is_additional_list(csv_path) else REASONS
 
 
@@ -521,7 +610,9 @@ def _additional_rows(csv_path) -> list[dict]:
 def hand_work(csv_path) -> dict:
     """{reason: [row dicts]} for every row that is not finished and not simply to do."""
     reasons = reasons_for(csv_path)
-    if is_pri_list(csv_path):
+    if is_fresh_list(csv_path):
+        rows = _fresh_rows(csv_path)
+    elif is_pri_list(csv_path):
         rows = _pri_rows(csv_path)
     elif is_additional_list(csv_path):
         rows = _additional_rows(csv_path)
@@ -910,7 +1001,8 @@ def report_info(path) -> dict:
 
 
 def wants_kind(csv_path) -> str:
-    return {"regular": "loan", "additional": "claim IS", "pri": "claim PRI", "prireg": "claim PRI"}[scheme_of(csv_path)]
+    return {"regular": "loan", "fresh": "loan", "additional": "claim IS", "pri": "claim PRI",
+            "prireg": "claim PRI"}[scheme_of(csv_path)]
 
 
 def list_reports(csv_path) -> list[dict]:
@@ -985,6 +1077,24 @@ def match_report(csv_path, report_name: str, dry_run: bool = False) -> dict:
     scheme = scheme_of(csv_path)
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     tag = f"portal report {path.name}"
+
+    if scheme == "fresh":                              # approved loan report: those farmers are done
+        import fasalrin_fresh as ff
+        found = f.read_report(path)
+        rows = _fresh_rows(csv_path)
+        marked = already = 0
+        for r in rows:
+            acct = (r.get(f.COL_ACCT) or "").strip()
+            if acct not in found:
+                continue
+            if fresh_bucket(r.get("Status") or "") in ("finished", "check"):
+                already += 1
+                continue
+            marked += 1
+            if not dry_run:
+                ff.log_progress(csv_path, acct, "ALREADY_ON_PORTAL", found[acct][0], f"{tag}: {found[acct][1]}")
+        return {"report_rows": len(found), "marked": marked, "already_done": already,
+                "in_report_not_in_list": len(set(found) - {(r.get(f.COL_ACCT) or "").strip() for r in rows})}
 
     if scheme == "regular":
         found = f.read_report(path)                    # {acct: (application id, status)}

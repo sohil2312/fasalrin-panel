@@ -519,6 +519,8 @@
         title="3% PRI claims for 2024-25 loans">PRI additional</button>
       <button role="tab" class="tab" data-tab="prireg" aria-selected="false"
         title="3% PRI claims for 2025-26 loans">PRI regular</button>
+      <button role="tab" class="tab" data-tab="fresh" aria-selected="false"
+        title="New farmers not in the portal: full application from scratch">IS fresh</button>
     </nav>
     <span id="pill" class="pill" role="status" aria-live="polite">idle</span>
   </header>
@@ -538,6 +540,7 @@
           <small>rollover claims: rows with Int Sub Amt &gt; 0</small></label>
         <label class="choice"><input type="radio" name="mtype" value="pri">PRI additional master
           <small>3% PRI claims: rows with 3% PRI &gt; 0</small></label>
+        <label class="choice"><input type="radio" name="mtype" value="fresh">IS fresh file</label>
         <label class="choice"><input type="radio" name="mtype" value="prireg">PRI regular master
           <small>3% PRI claims on 2025-26 loans: rows with 3% PRI &gt; 0</small></label>
       </div>
@@ -567,7 +570,18 @@
 
     <!-- step 3: pick the branch work list, upload its approved report, match -->
     <section class="card span2" id="repCard">
-      <h2>3 · Select branch &amp; match approved report <span class="muted" id="repFor"></span></h2>
+      <h2><span id="repTitle">3 · Select branch &amp; match approved report</span> <span class="muted" id="repFor"></span></h2>
+      <div id="freshUp" style="display:none">
+        <div class="row inline3" style="margin-top:0">
+          <input type="file" id="fFile" accept=".xlsx" aria-label="Branch file">
+          <button class="buildBtn" id="fUpBtn" disabled>Upload branch file</button>
+          <span id="fMsg" class="muted"></span>
+        </div>
+        <div class="hints"><span class="hint" style="--i:0"><svg class="ic"><use href="#i-file"/></svg><span>One branch's .xlsx</span></span>
+          <span class="hint" style="--i:1"><svg class="ic"><use href="#i-check"/></svg><span>Progress kept on re-upload</span></span>
+          <span class="hint warn" style="--i:2"><svg class="ic"><use href="#i-alert"/></svg><span>Crop rows need LAND AREA</span></span></div>
+        <h2 style="margin-top:18px">Work list &amp; approved report (optional)</h2>
+      </div>
       <div class="row inline3" style="margin-top:0">
         <select id="csv" aria-label="Branch work list"></select>
         <input type="file" id="repFile" accept=".zip,.xlsx" aria-label="Portal report">
@@ -597,6 +611,7 @@
           <small>rollover claims for 2024-25 loans</small></label>
         <label class="choice"><input type="radio" name="scheme" value="pri">PRI additional
           <small>3% PRI claims for 2024-25 loans</small></label>
+        <label class="choice"><input type="radio" name="scheme" value="fresh">IS fresh</label>
         <label class="choice"><input type="radio" name="scheme" value="prireg">PRI regular
           <small>3% PRI claims for 2025-26 loans</small></label>
       </div>
@@ -619,6 +634,8 @@
           <small><svg class="ic"><use href="#i-user"/></svg>Branch User · FY 24-25</small></label>
         <label class="choice" data-scheme="pri"><input type="radio" name="kind" value="pri_approve">Approve PRI additional claims
           <small><svg class="ic"><use href="#i-shield"/></svg>Branch Head · our claims</small></label>
+        <label class="choice" data-scheme="fresh"><input type="radio" name="kind" value="fresh">Enter fresh applications
+          <small><svg class="ic"><use href="#i-user"/></svg>Branch User · new farmers</small></label>
         <label class="choice" data-scheme="prireg"><input type="radio" name="kind" value="prireg">File PRI regular claims
           <small><svg class="ic"><use href="#i-user"/></svg>Branch User · FY 25-26</small></label>
         <label class="choice" data-scheme="prireg"><input type="radio" name="kind" value="prireg_approve">Approve PRI regular claims
@@ -752,6 +769,8 @@ const CONFIRM = {   // [tick-box label, short reminder]
         "Disb → Repay · PRI = lower · ⚠ Can't be undone"],
   prireg: ["Yes, file PRI regular claims for this branch",
            "Disb → Repay · PRI = lower · ⚠ Can't be undone"],
+  fresh: ["Yes, enter fresh applications for this branch",
+          "Aadhaar VERIFY · CC004 Castor / CC043 Dairy cow ×4 · \u26a0 Can't be undone"],
   prireg_approve: ["Yes, approve the PRI regular claims our job filed",
                    "Checked vs work list · ⚠ Can't be undone"],
   pri_approve: ["Yes, approve the PRI additional claims our job filed",
@@ -760,8 +779,10 @@ const CONFIRM = {   // [tick-box label, short reminder]
 const isAddList = c => /^branches\/\d+\/additional\/\d+_additional\.csv$/.test(c || "");
 const isPriList = c => /^branches\/\d+\/pri\/\d+_pri\.csv$/.test(c || "");
 const isPriRegList = c => /^branches\/\d+\/prireg\/\d+_prireg\.csv$/.test(c || "");
-const listScheme = c => isPriRegList(c) ? "prireg" : isPriList(c) ? "pri" : isAddList(c) ? "additional" : "regular";
-const SCHEME_NAME = {regular: "IS regular", additional: "IS additional", pri: "PRI additional", prireg: "PRI regular"};
+const isFreshList = c => /^branches\/\d+\/fresh\/\d+_fresh\.csv$/.test(c || "");
+const listScheme = c => isFreshList(c) ? "fresh" : isPriRegList(c) ? "prireg" : isPriList(c) ? "pri" : isAddList(c) ? "additional" : "regular";
+const SCHEME_NAME = {regular: "IS regular", additional: "IS additional", pri: "PRI additional", prireg: "PRI regular",
+                     fresh: "IS fresh"};
 function scheme() { const s = document.querySelector('input[name="scheme"]:checked'); return s ? s.value : "regular"; }
 let lastKind = null, lastScheme = null;
 function refreshForm(locked) {
@@ -871,6 +892,8 @@ const csvLabel = c => {
   if (m) return `${solName(m[1])} — IS additional work list`;
   m = c.match(/^branches\/(\d+)\/pri\/\1_pri\.csv$/);
   if (m) return `${solName(m[1])} — PRI additional work list`;
+  m = c.match(/^branches\/(\d+)\/fresh\/\1_fresh\.csv$/);
+  if (m) return `${solName(m[1])} — IS fresh work list`;
   m = c.match(/^branches\/(\d+)\/prireg\/\1_prireg\.csv$/);
   return m ? `${solName(m[1])} — PRI regular work list` : c;
 };
@@ -878,19 +901,24 @@ function mtype() { return scheme(); }              // the master card follows th
 
 // ---- the IS regular | IS additional tabs switch the whole dashboard ----
 function setTab(t, save = true) {
-  if (!["regular", "additional", "pri", "prireg"].includes(t)) t = "regular";
+  if (!["regular", "additional", "pri", "prireg", "fresh"].includes(t)) t = "regular";
   document.querySelectorAll(".tab").forEach(b => b.setAttribute("aria-selected", String(b.dataset.tab === t)));
   document.querySelector(`input[name="scheme"][value="${t}"]`).checked = true;
   document.querySelector(`input[name="mtype"][value="${t}"]`).checked = true;
   $("masterTitle").textContent = `1 · Master file — ${SCHEME_NAME[t]} (all branches)`;
-  $("startTitle").textContent = `4 · Start — ${SCHEME_NAME[t]}`;
-  pendLabel = {regular: "pending in master", additional: "Int Sub Amt > 0", pri: "3% PRI > 0", prireg: "3% PRI > 0"}[t];
+  const fresh = t === "fresh";                    // IS fresh: no master / build, the branch's own file is the list
+  $("masterCard").style.display = $("buildCard").style.display = fresh ? "none" : "";
+  $("freshUp").style.display = fresh ? "" : "none";
+  $("repTitle").textContent = fresh ? "1 · Upload branch file & match report" : "3 · Select branch & match approved report";
+  $("startTitle").textContent = `${fresh ? 2 : 4} · Start — ${SCHEME_NAME[t]}`;
+  pendLabel = {regular: "pending in master", additional: "Int Sub Amt > 0", pri: "3% PRI > 0", prireg: "3% PRI > 0", fresh: "new farmers"}[t];
   solChoice = "";
   $("mHelp").innerHTML = hints([
     ["i-file", {regular: "<b>Pending</b> rows", additional: "<b>Int Sub Amt</b> &gt; 0", pri: "<b>3% PRI</b> &gt; 0",
-                prireg: "<b>3% PRI</b> &gt; 0"}[t]],
+                prireg: "<b>3% PRI</b> &gt; 0", fresh: "<b>New farmers</b> (not in portal)"}[t]],
     ["i-check", "Progress kept"],
-    ...(t === "prireg" ? [["i-alert", "Loan via IS regular first", "warn"]] : [])]);
+    ...(t === "prireg" ? [["i-alert", "Loan via IS regular first", "warn"]] : []),
+    ...(t === "fresh" ? [["i-layers", "CC004 crop · CC043 dairy"], ["i-alert", "Crop rows need LAND AREA", "warn"]] : [])]);
   masterChoice = null; csvChoice = null; lastScheme = null;
   $("buildMsg").textContent = ""; $("mMsg").textContent = ""; $("exportMsg").textContent = ""; $("fixMsg").textContent = "";
   if (save) { try { localStorage.setItem("fasalrinTab", t); } catch (e) {} }
@@ -941,6 +969,14 @@ async function buildSol(sol) {
     csvChoice = r.csv.replace(/\\/g, "/"); lastScheme = null;
     loadMasters(); poll(); return;
   }
+  if (r.type === "fresh") {
+    $("buildMsg").innerHTML = `<b>${esc(r.sol)} ${esc(r.branch)}</b> (IS fresh): <b>${r.master_rows} new farmers</b>
+      (${r.cc004} CC004 crop, ${r.cc043} CC043 dairy) → ${r.finished} entered, ${r.hand} hand work`
+      + (r.check ? `, ${r.check} check on portal` : "") + `, <b>${r.to_do} to do</b>.`
+      + (r.area_col ? ` Land area column: <b>${esc(r.area_col)}</b>.` : ` <span class="err">No LAND AREA column: crop rows will be NO_LAND.</span>`);
+    csvChoice = r.csv.replace(/\\/g, "/"); lastScheme = null;
+    loadMasters(); poll(); return;
+  }
   if (r.type === "additional") {
     $("buildMsg").innerHTML = `<b>${esc(r.sol)} ${esc(r.branch)}</b> (IS additional): ${r.master_rows} rows in master,
       ${r.zero_int_sub} with Int Sub Amt 0 left out → <b>${r.with_int_sub} in the work list</b>:
@@ -957,6 +993,22 @@ async function buildSol(sol) {
   csvChoice = r.csv.replace(/\\/g, "/"); loadMasters(); poll();
 }
 $("master").addEventListener("change", () => { masterChoice = $("master").value; loadMasters(); });
+$("fFile").addEventListener("change", () => { $("fUpBtn").disabled = busy || !$("fFile").files.length; $("fMsg").textContent = ""; });
+$("fUpBtn").onclick = async () => {
+  const file = $("fFile").files[0];
+  if (!file) return;
+  $("fMsg").className = "muted"; $("fMsg").textContent = "uploading…";
+  const buf = new Uint8Array(await file.arrayBuffer());
+  let bin = ""; for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode.apply(null, buf.subarray(i, i + 0x8000));
+  const r = await post("/api/fresh_upload", {name: file.name, b64: btoa(bin)});
+  $("fFile").value = ""; $("fUpBtn").disabled = true;
+  if (r.error) { $("fMsg").className = "err"; $("fMsg").textContent = r.error; return; }
+  $("fMsg").className = "";
+  $("fMsg").innerHTML = `<b>${esc(r.sol)} ${esc(r.branch)}</b>: ${r.master_rows} new farmers (${r.cc004} CC004, ${r.cc043} CC043)
+    → ${r.finished} entered, ${r.hand} hand work` + (r.check ? `, ${r.check} check on portal` : "") + `, <b>${r.to_do} to do</b>.`
+    + (r.area_col ? ` Land area: <b>${esc(r.area_col)}</b>.` : ` <span class="err">No LAND AREA column: crop rows → NO_LAND.</span>`);
+  csvChoice = r.csv.replace(/\\/g, "/"); lastScheme = null; poll();
+};
 $("mFile").addEventListener("change", () => { $("mUpBtn").disabled = !$("mFile").files.length; $("mMsg").textContent = ""; });
 $("mUpBtn").onclick = async () => {
   const file = $("mFile").files[0];
@@ -1031,7 +1083,7 @@ function render(s) {
       claim: "Filing IS claims", claim_approve: "Approving IS claims", additional: "Filing IS additional claims",
       additional_approve: "Approving IS additional claims", pri: "Filing PRI additional claims",
       pri_approve: "Approving PRI additional claims", prireg: "Filing PRI regular claims",
-      prireg_approve: "Approving PRI regular claims"}[j.kind] || j.kind) + " — " + j.csv;
+      prireg_approve: "Approving PRI regular claims", fresh: "Entering fresh applications"}[j.kind] || j.kind) + " — " + j.csv;
     $("jobMeta").textContent = `started ${fmtTime(j.started)}`;
     const pct = j.total ? Math.min(100, Math.round(100 * j.done / j.total)) : 0;
     $("barFill").style.width = (j.total ? pct : (busy ? 100 : 0)) + "%";
@@ -1051,6 +1103,12 @@ function render(s) {
   // csv totals
   $("sumName").textContent = s.csv ? "· " + s.csv : "";
   const sm = s.summary || {}, b = sm.buckets || {};
+  if (sm.scheme === "fresh") {
+    const fr = sm.fresh || {};
+    stats($("sumMain"), [["new farmers", sm.rows ?? 0], ["entered", fr.entered ?? 0], ["needs hand work", fr.hand ?? 0],
+                         ["check on portal", fr.check ?? 0], ["errors (retried)", fr.errors ?? 0], ["to do", fr.todo ?? 0],
+                         ["CC004 crop", fr.cc004 ?? 0], ["CC043 dairy", fr.cc043 ?? 0]]);
+  } else
   if (["additional", "pri", "prireg"].includes(sm.scheme)) {
     const a = sm.additional || {};
     stats($("sumMain"), [["rows", sm.rows ?? 0], ["claimed by us", a.claimed ?? 0], ["· approved", a.approved ?? 0],

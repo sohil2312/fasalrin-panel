@@ -45,12 +45,15 @@ JOBS = {
     # PRI regular (3% PRI claims for 2025-26 loans; claim only, the loan is entered through IS regular)
     "prireg": {"script": "fasalrin_prireg.py", "log": "prireg.log", "login": "Branch User"},
     "prireg_approve": {"script": "fasalrin_prireg_verify.py", "log": "prireg_verify.log", "login": "Branch Head"},
+    # IS fresh (farmers not in the portal yet: entered from scratch from the "not in system" Excel)
+    "fresh": {"script": "fasalrin_fresh.py", "log": "fresh.log", "login": "Branch User"},
 }
 ADDITIONAL_JOBS = {"additional", "additional_approve"}
 JOB_SCHEME = {"additional": "additional", "additional_approve": "additional", "pri": "pri", "pri_approve": "pri",
-              "prireg": "prireg", "prireg_approve": "prireg"}
-SCHEME_NAME = {"regular": "IS regular", "additional": "IS additional", "pri": "PRI additional", "prireg": "PRI regular"}
-MASTER_KINDS = ("regular", "additional", "pri", "prireg")
+              "prireg": "prireg", "prireg_approve": "prireg", "fresh": "fresh"}
+SCHEME_NAME = {"regular": "IS regular", "additional": "IS additional", "pri": "PRI additional", "prireg": "PRI regular",
+               "fresh": "IS fresh"}
+MASTER_KINDS = ("regular", "additional", "pri", "prireg", "fresh")
 SIDE_FILES = ("_progress.csv", "_approvals.csv")
 
 lock = threading.Lock()
@@ -68,17 +71,19 @@ def input_csvs() -> list[str]:
                  if p.stem == f"{p.parent.parent.name}_additional")
     pri = sorted(p.relative_to(ROOT).as_posix() for k in ("pri", "prireg")
                  for p in (ROOT / "branches").glob(f"*/{k}/*_{k}.csv") if p.stem == f"{p.parent.parent.name}_{k}")
+    fresh = sorted(p.relative_to(ROOT).as_posix() for p in (ROOT / "branches").glob("*/fresh/*_fresh.csv")
+                   if p.stem == f"{p.parent.parent.name}_fresh")
     loose = sorted(p.name for p in ROOT.glob("*.csv") if not p.name.endswith(SIDE_FILES))
-    return work + add + pri + loose
+    return work + add + pri + fresh + loose
 
 
 MASTER_DIR = ROOT / "master"
 MASTER_DIRS = {"regular": MASTER_DIR, "additional": MASTER_DIR / "additional", "pri": MASTER_DIR / "pri",
-               "prireg": MASTER_DIR / "prireg"}
+               "prireg": MASTER_DIR / "prireg", "fresh": MASTER_DIR / "fresh"}
 SOLS_OF = {"regular": branches.sols, "additional": branches.sols_additional, "pri": branches.sols_pri,
-           "prireg": branches.sols_prireg}
+           "prireg": branches.sols_prireg, "fresh": branches.sols_fresh}
 BUILD_OF = {"regular": branches.build, "additional": branches.build_additional, "pri": branches.build_pri,
-            "prireg": branches.build_prireg}
+            "prireg": branches.build_prireg, "fresh": branches.build_fresh}
 
 
 def masters(kind: str = "regular") -> list[str]:
@@ -261,7 +266,27 @@ def additional_summary(name: str) -> dict:
                            "todo": b["todo"]}}
 
 
+def fresh_summary(name: str) -> dict:
+    """Totals for an IS fresh work list (statuses from its progress file)."""
+    rows = branches._fresh_rows(ROOT / name)
+    b = collections.Counter(branches.fresh_bucket(r.get("Status") or "") for r in rows)
+    st = collections.Counter((r.get("Status") or "").strip() or "TO DO" for r in rows)
+    summ = branches.hand_work_dir(ROOT / name) / f"{Path(name).stem}_summary.csv"
+    return {"scheme": "fresh", "rows": len(rows), "status": dict(st.most_common()),
+            "reasons": branches.hand_work_counts(ROOT / name),
+            "export": time.strftime("%d-%m %H:%M", time.localtime(summ.stat().st_mtime)) if summ.exists() else None,
+            "fresh": {"entered": b["finished"], "hand": b["hand"], "check": b["check"], "errors": b["error"],
+                      "todo": b["todo"],
+                      "cc004": sum(1 for r in rows if (r.get("Scheme Code") or "").upper() == "CC004"),
+                      "cc043": sum(1 for r in rows if (r.get("Scheme Code") or "").upper() == "CC043")}}
+
+
 def csv_summary(name: str) -> dict:
+    if branches.is_fresh_list(ROOT / name):
+        try:
+            return fresh_summary(name)
+        except OSError:
+            return {}
     if branches.is_additional_list(ROOT / name) or branches.is_pri_list(ROOT / name):
         try:
             return additional_summary(name)
@@ -446,6 +471,24 @@ class Handler(BaseHTTPRequestHandler):
             kind = body.get("type") if body.get("type") in MASTER_KINDS else "regular"
             err, saved = save_master(body.get("name", ""), body.get("b64", ""), kind)
             return self._send(400 if err else 200, {"error": err} if err else {"ok": True, "master": saved, "type": kind})
+        if self.path == "/api/fresh_upload":         # IS fresh: the branch's own file -> its work list directly
+            if running():
+                return self._send(400, {"error": "stop the running job first"})
+            err, saved = save_master(body.get("name", ""), body.get("b64", ""), "fresh")
+            if err:
+                return self._send(400, {"error": err})
+            path = MASTER_DIRS["fresh"] / saved
+            sols = branches.sols_fresh(path)
+            if len(sols) != 1:
+                path.unlink(missing_ok=True)
+                return self._send(400, {"error": f"upload one branch's file: this file has {len(sols)} SOLs "
+                                                 f"({', '.join(s['sol'] for s in sols)[:80]})"})
+            try:
+                with lock:
+                    res = branches.build_fresh(path, sols[0]["sol"])
+            except Exception as e:
+                return self._send(400, {"error": str(e)[:200]})
+            return self._send(200, {"ok": True, "type": "fresh", "file": saved, **res})
         if self.path == "/api/build":
             kind = body.get("type") if body.get("type") in MASTER_KINDS else "regular"
             m, sol = body.get("master", ""), str(body.get("sol", "")).strip()

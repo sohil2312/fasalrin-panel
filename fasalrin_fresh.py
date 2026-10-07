@@ -1,0 +1,686 @@
+#!/usr/bin/env python3
+"""
+IS regular FRESH applications: farmers the portal does not know yet (NOT_IN_SYSTEM), entered from scratch with
+the bank's "not in system" Excel (Aadhaar, DOB, name as per Aadhaar, gender, relative, mobile, address, village,
+survey / khata / land area). Branch User login. Steps as the user showed on two samples (KCC CC004, KCC AH CC043):
+
+  Loan Application -> FY 2025-2026 + Aadhaar -> FETCH RECORD -> "enter farmer-details" -> OK (blank form)
+  1 Applicant : Application Type Normal, Name (Aadhaar) -> VERIFY, passbook name = Aadhaar name, DOB, gender,
+                mobile (MO NO; blank / not 10 digits -> 9876543210), ST / OWNER / SMALL, SON OF (M) / WIFE OF (F),
+                relative name, primary activity (CC004 Agri Crops, CC043 Animal Husbandry),
+                residence Kadana + village, street address, pincode -> SAVE & CONTINUE
+  2 Account   : account no twice, SINGLE -> SAVE & CONTINUE
+  3 Financial : sanction date = Disb. Date, eligibility = DL = DP -> SAVE & CONTINUE
+  4 Activity  : CC004 Agri Crops: sanctioned = DP, Castor (RF), survey, khata, land area, IRRIGATED, KHARIF
+                CC043 Animal Husbandry: sanctioned = DP, DAIRY, COW, 4 units
+                Find Location: Kadana + village -> PROCEED -> SAVE & CONTINUE
+  5 Summary   : term loan 0 -> PREVIEW -> checks -> SUBMIT -> CONFIRM -> application no.
+
+Anything that does not fit -> the row is hand work (reason recorded, never submitted) and the run goes on.
+
+    .venv\\Scripts\\python fasalrin_fresh.py "not in sytem.xlsx"            # builds branches/<SOL>/fresh/<SOL>_fresh.csv
+    .venv\\Scripts\\python fasalrin_fresh.py branches/3106/fresh/3106_fresh.csv [--limit N] [--villages]
+"""
+
+from __future__ import annotations
+
+import argparse
+import collections
+import csv
+import os
+import re
+import sys
+import time
+from datetime import date, datetime
+from pathlib import Path
+
+from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
+
+import fasalrin_regular as f
+from fasalrin_regular import BTN, wait_for, modal_text, pane, wait_pane, fill_amount, pick_calendar_date, StuckError
+
+FIN_YEAR = f.FIN_YEAR
+SUBDISTRICT = "Kadana"
+DEFAULT_MOBILE = "9876543210"        # user rule: MO NO blank / not 10 digits
+DEFAULT_PIN = "389240"
+CASTE, FARMER_CAT, FARMER_TYPE, APP_TYPE = "ST", "OWNER", "SMALL", "Normal"
+CROP = "Castor (Rehri, Rendi, Arandi) - RF"
+LAND_TYPE, SEASON = "IRRIGATED", "KHARIF"
+AH_CATEGORY, AH_ANIMAL, AH_UNITS = "DAIRY", "COW", "4"
+ACTIVITY = {"CC004": "Agri Crops", "CC043": "Animal Husbandry"}
+
+OUT_COLS = ["Status", "Loan App No", "Detail"]
+DONE = {"COMPLETED", "ALREADY_ON_PORTAL", "EXISTS_ON_PORTAL", "VERIFY_FAILED", "VILLAGE_NOT_FOUND", "NO_LAND",
+        "BAD_DATA", "APPLICANT_INCOMPLETE", "SCHEME_UNKNOWN"}
+HAND = DONE - {"COMPLETED", "ALREADY_ON_PORTAL"}
+HOLD = "CHECK_PORTAL"
+PROGRESS_HEADER = ["Time", "Account No.", "Status", "Loan App No", "Detail"]
+LIMIT = 0
+
+
+def is_done(st: str) -> bool:
+    st = (st or "").strip().upper()
+    return st in DONE or st.startswith(HOLD)
+
+
+# ----------------------------------------------------------------------------
+# Excel -> work list
+# ----------------------------------------------------------------------------
+def _txt(v) -> str:
+    if v is None:
+        return ""
+    if isinstance(v, datetime):
+        return v.strftime("%d-%m-%Y")
+    if isinstance(v, float) and v.is_integer():
+        v = int(v)
+    return re.sub(r"\s+", " ", str(v)).strip()
+
+
+def write_worklist(path: Path, recs: list[dict]):
+    """Write the work list for one SOL, keeping Status / Loan App No / Detail already there (CSV + progress file)."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    head = [c for c in recs[0] if c and c not in OUT_COLS]
+    cols = head + OUT_COLS
+    old = {}
+    if path.exists():
+        with open(path, newline="", encoding="utf-8-sig") as fh:
+            old = {r.get("Account No.", ""): r for r in csv.DictReader(fh)}
+    for acct, rec in progress_records(path).items():
+        old.setdefault(acct, {}).update(rec)
+    with open(path, "w", newline="", encoding="utf-8-sig") as fh:
+        w = csv.DictWriter(fh, fieldnames=cols)
+        w.writeheader()
+        for d in recs:
+            o = old.get(d.get("Account No.", ""), {})
+            w.writerow({**{c: d.get(c, "") for c in head}, **{c: o.get(c, "") or "" for c in OUT_COLS}})
+
+
+def build_from_excel(xlsx: str) -> list[Path]:
+    """One work list per SOL in branches/<SOL>/fresh/ (same as Build in the panel's IS fresh tab)."""
+    import branches
+    out = []
+    for s in branches.sols_fresh(xlsx):
+        r = branches.build_fresh(xlsx, s["sol"])
+        print(f"[build] {r['csv']}: {r['master_rows']} rows ({r['cc004']} CC004, {r['cc043']} CC043), "
+              f"{r['finished']} entered, {r['hand']} hand work, {r['to_do']} to do"
+              + ("" if r["area_col"] else "  - no LAND AREA column: crop rows will be NO_LAND"))
+        out.append(Path(r["csv"]))
+    return out
+
+
+def progress_path(csv_path) -> Path:
+    p = Path(csv_path)
+    return p.with_name(p.stem + "_progress.csv")
+
+
+def progress_records(csv_path) -> dict:
+    """Latest record per account from the append-only progress file."""
+    p = progress_path(csv_path)
+    out = {}
+    if p.exists():
+        with open(p, newline="", encoding="utf-8") as fh:
+            for r in csv.DictReader(fh):
+                out[r["Account No."]] = {"Status": r["Status"], "Loan App No": r["Loan App No"], "Detail": r["Detail"]}
+    return out
+
+
+def log_progress(csv_path, acct, status, app_no, detail):
+    p = progress_path(csv_path)
+    new = not p.exists()
+    with open(p, "a", newline="", encoding="utf-8") as fh:
+        w = csv.writer(fh)
+        if new:
+            w.writerow(PROGRESS_HEADER)
+        w.writerow([time.strftime("%Y-%m-%d %H:%M:%S"), acct, status, app_no, detail])
+        fh.flush()
+        os.fsync(fh.fileno())
+
+
+def save_csv(path, header, rows):
+    tmp = Path(str(path) + ".tmp")
+    with open(tmp, "w", newline="", encoding="utf-8-sig") as fh:
+        w = csv.DictWriter(fh, fieldnames=header)
+        w.writeheader()
+        w.writerows(rows)
+    for _ in range(10):
+        try:
+            os.replace(tmp, path)
+            return
+        except PermissionError:                     # open in Excel: the progress file still has everything
+            time.sleep(1)
+    print(f"\n    (could not update {path}: open in Excel? progress file is up to date)")
+
+
+# ----------------------------------------------------------------------------
+# portal helpers for the new-farmer form
+# ----------------------------------------------------------------------------
+def norm(s: str) -> str:
+    s = (s or "").upper().replace("UTTAR", "NORTH").replace("DAKSHIN", "SOUTH")
+    return re.sub(r"[^A-Z]", "", s)
+
+
+def match_village(want: str, options: list[str]) -> str | None:
+    """Excel village -> one portal option: exact (letters only, UTTAR = North), then prefix, then same consonants,
+    then consonant prefix. 'JUNA MAL / MAL' tries each name. Ambiguous or nothing -> None (hand work, no guess)."""
+    opts = [o for o in options if o and o.strip().lower() != "select"]
+    cons = lambda x: re.sub(r"[AEIOUY]", "", x)
+    for part in [want] + [x for x in re.split(r"[/,]", want or "") if x.strip()][::-1]:
+        w = norm(part)
+        if not w:
+            continue
+        for test in (lambda o: norm(o) == w,
+                     lambda o: norm(o).startswith(w) or w.startswith(norm(o)),
+                     lambda o: cons(norm(o)) == cons(w),
+                     lambda o: sorted(norm(x) for x in o.split()) == sorted(norm(x) for x in part.split()),
+                     lambda o: len(cons(w)) >= 3 and cons(norm(o)).startswith(cons(w))):
+            hit = [o for o in opts if test(o)]
+            if len(hit) == 1:
+                return hit[0]
+            if len(hit) > 1:
+                break                               # ambiguous for this name: try the next name, never guess
+    return None
+
+
+def select_label(scope, name: str, label: str, page, wait_options=8):
+    sel = scope.locator(f'select[name="{name}"]').first
+    sel.wait_for()
+    wait_for(page, lambda: label in sel.evaluate("s => [...s.options].map(o => o.text.trim())"), wait_options,
+             f"option {label!r} in {name}")
+    for _ in range(5):
+        sel.select_option(label=label)
+        sel.dispatch_event("change")
+        page.wait_for_timeout(250)
+        if sel.evaluate("s => (s.options[s.selectedIndex] || {}).text.trim()") == label:
+            return
+    raise RuntimeError(f"could not select {label!r} in {name}")
+
+
+def options_of(scope, name: str) -> list[str]:
+    return scope.locator(f'select[name="{name}"]').first.evaluate("s => [...s.options].map(o => o.text.trim())")
+
+
+def fill_text(page, loc, value: str):
+    loc.wait_for()
+    loc.click()
+    loc.fill("")
+    loc.fill(value)
+    loc.dispatch_event("input")
+    loc.dispatch_event("change")
+    page.wait_for_timeout(150)
+
+
+def pick_dob(page, inp, target: date):
+    """DOB: type DD/MM/YYYY into the box (the Age box filling in = accepted); otherwise the rmdp calendar, using
+    visible panels only: year header -> year panel (12 a page) -> month header -> month panel -> day."""
+    want = f"{target:%d/%m/%Y}"
+    age = pane(page, 1).locator('input[name="age"]').first
+    accepted = lambda: inp.input_value().strip() == want and (age.count() == 0 or age.input_value().strip() not in ("", "0"))
+    try:
+        inp.click()
+        inp.fill(want)
+        inp.dispatch_event("input"); inp.dispatch_event("change")
+        inp.press("Enter")
+        page.wait_for_timeout(500)
+        if accepted():
+            page.keyboard.press("Escape")
+            return
+    except Exception:
+        pass
+
+    if not page.locator(".rmdp-header-values:visible").count():
+        inp.click()
+    page.wait_for_selector(".rmdp-header-values >> visible=true", timeout=8000)
+    vis = lambda sel: page.locator(sel).locator("visible=true")
+    vis(".rmdp-header-values span").filter(has_text=re.compile(r"^\s*\d{4}\s*$")).first.click()     # year panel
+    page.wait_for_timeout(300)
+    for _ in range(40):
+        years = [int(t) for t in vis(".rmdp-year-picker .rmdp-day span").all_inner_texts() if t.strip().isdigit()]
+        if years and min(years) <= target.year <= max(years):
+            break
+        arrow = ".rmdp-left" if not years or target.year < min(years) else ".rmdp-right"
+        vis(f".rmdp-arrow-container{arrow}").first.click()
+        page.wait_for_timeout(150)
+    else:
+        raise RuntimeError(f"DOB year {target.year} not reachable")
+    vis(".rmdp-year-picker .rmdp-day span").filter(has_text=re.compile(rf"^\s*{target.year}\s*$")).first.click()
+    page.wait_for_timeout(300)
+    mon = f.MONTHS[target.month - 1]
+    if not vis(".rmdp-month-picker").count():
+        vis(".rmdp-header-values span").filter(has_text=re.compile(r"[A-Za-z]")).first.click()        # month panel
+        page.wait_for_timeout(300)
+    if vis(".rmdp-month-picker").count():
+        vis(".rmdp-month-picker .rmdp-day span").filter(has_text=re.compile(rf"^\s*{mon[:3]}", re.I)).first.click()
+        page.wait_for_timeout(300)
+    else:                                                     # no month panel: step with the arrows
+        for _ in range(24):
+            hdr = " ".join(vis(".rmdp-header-values span").all_inner_texts())
+            if re.search(mon, hdr, re.I):
+                break
+            cur = next((n for n, m in enumerate(f.MONTHS) if re.search(m, hdr, re.I)), 0)
+            vis(".rmdp-arrow-container.rmdp-right" if cur < target.month - 1 else ".rmdp-arrow-container.rmdp-left").first.click()
+            page.wait_for_timeout(150)
+    ok = page.evaluate("""(day) => {
+        const vis = e => e.getClientRects().length > 0;
+        for (const d of document.querySelectorAll('.rmdp-day-picker .rmdp-day')) {
+          const sp = d.querySelector('span');
+          if (!vis(d) || !sp || sp.textContent.trim() !== String(day) || d.classList.contains('rmdp-day-hidden')) continue;
+          if (d.classList.contains('rmdp-disabled')) return 'disabled';
+          sp.click(); return 'ok';
+        }
+        return 'notfound'; }""", target.day)
+    if ok != "ok":
+        raise RuntimeError(f"DOB {want} not selectable ({ok})")
+    wait_for(page, accepted, 5, f"DOB {want} to register")
+    page.keyboard.press("Escape")
+
+
+def dob_input(page):
+    """The DOB box of the applicant tab: the rmdp input next to the Age box."""
+    p1 = pane(page, 1)
+    loc = p1.locator("input.rmdp-input")
+    if loc.count():
+        return loc.first
+    return p1.locator('input[name="age"]').locator("xpath=preceding::input[1]").first
+
+
+def find_location(page, village: str):
+    """Activity tab: 'Find Location?' -> Kadana + village -> PROCEED."""
+    page.locator("a", has_text=re.compile(r"Find Location", re.I)).first.click()
+    m = page.locator(".modal-content:visible")
+    select_label(m, "landSubDistrictID", SUBDISTRICT, page)
+    wait_for(page, lambda: len(options_of(m, "landVillageID")) > 1, 10, "land villages")
+    v = match_village(village, options_of(m, "landVillageID"))
+    if not v:
+        raise VillageError(village)
+    select_label(m, "landVillageID", v, page)
+    m.locator("button", has_text=BTN("PROCEED")).first.click()
+    wait_for(page, lambda: not page.locator('.modal-content:visible select[name="landVillageID"]').count(), 10,
+             "location popup to close")
+
+
+class VillageError(RuntimeError):
+    pass
+
+
+def to_dashboard(page):
+    try:
+        f.dismiss_ok_dialogs(page)
+        f.click_side_nav(page, "/dashboard")
+        page.wait_for_timeout(800)
+    except Exception:
+        pass
+
+
+# ----------------------------------------------------------------------------
+# one row
+# ----------------------------------------------------------------------------
+def process_row(page, d: dict, stage: dict, mark_submitting):
+    acct = d["Account No."]
+    aadhaar = re.sub(r"\D", "", d["Aadhaar No."])
+    scheme = d["Scheme Code"].strip().upper()
+    activity = ACTIVITY[scheme]
+    disb = f.parse_dmy(d["Disb. Date"])
+    dob = f.parse_dmy(d["DOB"])
+    dp = int(f.money_to_float(d["DP"]))
+    name = re.sub(r"[\s.]+$", "", d["NAME AS PER ADHAR"]).strip()
+    village = d["VILLAGE"]
+    mob = re.sub(r"\D", "", d.get("MO NO", ""))
+    mobile = mob if len(mob) == 10 else DEFAULT_MOBILE
+    female = d["GENDER"].strip().upper().startswith("F")
+    addr = re.sub(r"\s+", " ", d["ADDRESS"]).strip(" ,")
+    pin = (re.findall(r"\b(\d{6})\b", addr) or [DEFAULT_PIN])[-1]
+
+    stage["s"] = "start"
+    f.open_fetch_popup(page)
+    res = f.fetch_record(page, aadhaar)
+    stage["s"] = "fetched"
+    if res == "exists":
+        page.locator('.modal-content:visible button', has_text=BTN("(?:BACK TO DASHBOARD|OK)")).first.click()
+        to_dashboard(page)
+        return "EXISTS_ON_PORTAL", "", "portal already knows this Aadhaar: use IS regular entry / check by hand"
+    if res != "not_in_system":
+        raise RuntimeError(f"unexpected FETCH response: {res}")
+    page.locator('.modal-content:visible button', has_text=BTN("OK")).first.click()
+
+    # ---- 1. Applicant ----
+    p1 = pane(page, 1)
+    wait_pane(page, 1)
+    select_label(p1, "applicationType", APP_TYPE, page)
+    fill_text(page, p1.locator('input[name="beneficiaryName"]').first, name)
+    p1.locator("button:visible", has_text=BTN("VERIFY")).first.click()
+    stage["s"] = "verify"
+    # verified = the VERIFY button goes away (green tick); a popup may or may not come first
+    def verify_answer():
+        t = modal_text(page)
+        if t:
+            return "popup", t
+        if not p1.locator("button:visible", has_text=BTN("VERIFY")).count():
+            return "verified", ""
+        return None
+    kind, txt = wait_for(page, verify_answer, 45, "Aadhaar VERIFY answer")
+    if kind == "popup":
+        print(f"\n    verify popup: {re.sub(r'[0-9]{12}', 'XXXXXXXXXXXX', txt)[:140]}", flush=True)
+        page.locator('.modal-content:visible button', has_text=BTN("(?:OK|CLOSE)")).first.click()
+        page.wait_for_timeout(800)
+    if p1.locator("button:visible", has_text=BTN("VERIFY")).count():
+        to_dashboard(page)
+        why = re.sub(r"\s+", " ", txt)[:120]
+        return "VERIFY_FAILED", "", f"Aadhaar VERIFY with name {name!r}: {why}"
+    stage["s"] = "applicant"                        # nothing saved until SAVE & CONTINUE: still safe to retry
+    fill_text(page, p1.locator('input[name="beneficiaryPassbookName"]').first, name)
+    pick_dob(page, dob_input(page), dob)
+    select_label(p1, "gender", "FEMALE" if female else "MALE", page)
+    if p1.locator('select[name="isMobileRequired"]:visible').count():
+        select_label(p1, "isMobileRequired", "Yes", page)
+    fill_text(page, p1.locator('input[name="mobile"]').first, mobile)
+    select_label(p1, "casteCategory", CASTE, page)
+    select_label(p1, "farmerCategory", FARMER_CAT, page)
+    select_label(p1, "farmerType", FARMER_TYPE, page)
+    select_label(p1, "relation", "WIFE OF" if female else "SON OF", page)
+    fill_text(page, p1.locator('input[name="relativeName"]').first, d["RELATIVE NAME"].strip(" ."))
+    select_label(p1, "primaryActivity", activity, page)
+    select_label(p1, "resSubDistrictId", SUBDISTRICT, page)
+    wait_for(page, lambda: len(options_of(p1, "resVillageId")) > 1, 10, "residence villages")
+    v = match_village(village, options_of(p1, "resVillageId"))
+    if not v:
+        to_dashboard(page)
+        return "VILLAGE_NOT_FOUND", "", f"village {village!r} not (or not uniquely) in the portal list for Kadana"
+    select_label(p1, "resVillageId", v, page)
+    ad = p1.locator('input[name="resAddress"]').first
+    maxlen = int(ad.get_attribute("maxlength") or 0)
+    fill_text(page, ad, addr[:maxlen] if maxlen else addr)
+    fill_text(page, p1.locator('input[name="resPincode"]').first, pin)
+    save1 = p1.locator("button", has_text=BTN("(?:SAVE|UPDATE) & CONTINUE")).first
+    save1.click()
+    stage["s"] = "applicant_saved"
+
+    # ---- 2. Account ----
+    try:
+        wait_pane(page, 2, retry_btn=save1)
+    except RuntimeError as e:
+        if str(e).startswith("portal validation:"):
+            f.shot(page, f"fresh_applicant_{acct}")
+            to_dashboard(page)
+            return "APPLICANT_INCOMPLETE", "", "applicant tab: " + str(e)[len("portal validation:"):][:120]
+        raise
+    p2 = pane(page, 2)
+    fill_text(page, p2.locator('input[name="accountNumber"]').first, acct)
+    fill_text(page, p2.locator('input[name="confirmAccountNumber"]').first, acct)
+    select_label(p2, "accountHolder", "SINGLE", page)
+    save2 = p2.locator("button", has_text=BTN("(?:SAVE|UPDATE) & CONTINUE")).first
+    save2.click()
+    stage["s"] = "account_saved"
+
+    # ---- 3. Financial ----
+    wait_pane(page, 3, retry_btn=save2)
+    fin = page.locator("#finance")
+    date_in = fin.locator("input.rmdp-input").first
+    elig_in = fin.locator('input[name="loanSanctionAmount"]').first
+    dl_in = fin.locator('input[name="drawingLimit"]').first
+    pick_calendar_date(page, date_in, disb)
+    fill_amount(page, elig_in, dp)
+    fill_amount(page, dl_in, dp)
+    wait_for(page, lambda: f.money_to_float(dl_in.input_value()) == dp and f.money_to_float(elig_in.input_value()) == dp,
+             5, "financial amounts to stick")
+    save3 = fin.locator("button", has_text=BTN("SAVE & CONTINUE")).first
+    save3.click()
+    stage["s"] = "financial_saved"
+
+    # ---- 4. Activity ----
+    wait_pane(page, 4, retry_btn=save3)
+    act = page.locator("#activity")
+    act.locator("button", has_text=BTN(re.escape(activity))).first.click()
+    ls_in = act.locator('input[name="loanSanctionedAmount"]').first
+    ls_in.wait_for(timeout=8000)
+    act_date = act.locator("input.rmdp-input").first
+    if act_date.count() and act_date.input_value().strip() != f"{disb:%d/%m/%Y}":
+        try:
+            wait_for(page, lambda: act_date.input_value().strip() == f"{disb:%d/%m/%Y}", 3, "activity date")
+        except StuckError:
+            pick_calendar_date(page, act_date, disb)
+    fill_amount(page, ls_in, dp)
+    if scheme == "CC004":
+        select_label(act, "cropCode", CROP, page)
+        fill_text(page, act.locator('input[name="surveyNumber"]').first, d["SURVEY NO"])
+        fill_text(page, act.locator('input[name="khataNumber"]').first, d["KHATA NO"])
+        fill_text(page, act.locator('input[name="landArea"]').first, d["_area"])
+        select_label(act, "landType", LAND_TYPE, page)
+        select_label(act, "seasonCode", SEASON, page)
+    else:
+        select_label(act, "stockCount", AH_CATEGORY, page)
+        select_label(act, "liveStockCode", AH_ANIMAL, page)
+        fill_text(page, act.locator('input[name="unitCount"]').first, AH_UNITS)
+    try:
+        find_location(page, village)
+    except VillageError:
+        to_dashboard(page)
+        return "VILLAGE_NOT_FOUND", "", f"land village {village!r} not (or not uniquely) in the portal list"
+    wait_for(page, lambda: f.money_to_float(ls_in.input_value()) == dp, 5, "activity amount to stick")
+    save4 = act.locator("button", has_text=BTN("SAVE & CONTINUE")).first
+    save4.click()
+    stage["s"] = "activity_saved"
+
+    # ---- 5. Summary -> preview ----
+    wait_pane(page, 5, retry_btn=save4)
+    t5 = pane(page, 5)
+    txt5 = wait_for(page, lambda: (lambda t: t if "Term Loan For Current FY" in t else None)(t5.inner_text()),
+                    f.STUCK_TIMEOUT_S, "term loan summary")
+    m = re.search(r"Term Loan For Current FY.*?₹\s*([\d,]+\.\d+)", txt5.replace("\n", " "), re.S)
+    if (f.money_to_float(m.group(1)) if m else -1) != 0:
+        f.shot(page, f"fresh_termloan_{acct}")
+        raise RuntimeError("Term Loan For Current FY is not 0")
+    t5.locator("button", has_text=BTN("PREVIEW")).first.evaluate("el => el.click()")
+    stage["s"] = "preview"
+
+    wait_for(page, lambda: "/loan-application-preview" in page.url and "Application Status" in f.body_text(page),
+             f.STUCK_TIMEOUT_S, "preview page")
+    page.wait_for_timeout(400)
+    pv = re.sub(r"\s+", " ", f.body_text(page))
+    problems = []
+    for pat, what in [(rf"Account Number\s*{acct}\b", "account"),
+                      (rf"Aadhaar No\.\s*XXXX-XXXX-{aadhaar[-4:]}", "aadhaar last-4"),
+                      (rf"KCC loan sanctioned / KCC renewed on\s*{disb:%d/%m/%Y}", "sanction date")]:
+        if not re.search(pat, pv):
+            problems.append(what)
+    for label, what in [(r"KCC drawing limit for current FY", "drawing limit"),
+                        (r"KCC Loan Sanction eligiblity as per SOF", "eligibility"),
+                        (r"Loan Sanctioned \(INR\)", "activity amount")]:
+        mm = re.search(label + r"\s*₹\s*([\d,]+(?:\.\d+)?)", pv)
+        if not mm or f.money_to_float(mm.group(1)) != dp:
+            problems.append(f"{what} (got {mm.group(1) if mm else 'none'}, want {dp})")
+    if problems:
+        f.shot(page, f"fresh_preview_{acct}")
+        raise RuntimeError(f"preview mismatch: {', '.join(problems)}")
+    if re.search(r"Application Status\s*(Submitted|Approved)", pv, re.I):
+        page.get_by_role("button", name=BTN("BACK")).first.click()
+        return "ALREADY_ON_PORTAL", "", "preview shows it is already submitted"
+
+    # ---- SUBMIT -> CONFIRM -> OK ----
+    page.get_by_role("button", name=BTN("SUBMIT")).first.click()
+    wait_for(page, lambda: re.search(r"sure you want to submit", modal_text(page), re.I), f.STUCK_TIMEOUT_S, "confirm dialog")
+    mark_submitting()
+    page.locator('.modal-content:visible button', has_text=BTN("CONFIRM")).first.click()
+    stage["s"] = "submitting"
+    txt = wait_for(page, lambda: (lambda t: t if re.search(r"submitted successfully", t, re.I) else None)(modal_text(page)),
+                   f.STUCK_TIMEOUT_S, "submitted-successfully dialog")
+    m = re.search(r"Loan application\s*([0-9]+)\s*submitted", txt, re.I)
+    page.locator('.modal-content:visible button', has_text=BTN("OK")).first.click()
+    stage["s"] = "done"
+    page.wait_for_timeout(600)
+    kind = f"{activity}" + (f" {CROP} {d['_area']} {LAND_TYPE}" if scheme == "CC004" else f" {AH_CATEGORY} {AH_ANIMAL} x{AH_UNITS}")
+    return "COMPLETED", m.group(1) if m else "", f"{v} · DP {dp} · {kind}"
+
+
+# ----------------------------------------------------------------------------
+# run
+# ----------------------------------------------------------------------------
+SAFE_STAGES = ("start", "fetched", "verify", "applicant")      # before the first SAVE: no draft on the portal
+
+
+def area_column(header) -> str | None:
+    """The land-area column: LAND / LAND AREA / AREA (any case, optional unit in brackets)."""
+    return next((c for c in header if re.fullmatch(r"\s*(LAND\s*AREA|LAND|AREA)\s*(\(.*\))?\s*", c or "", re.I)), None)
+
+
+def precheck(d: dict) -> tuple[str, str] | None:
+    """Row problems found without the browser -> (status, detail)."""
+    if len(re.sub(r"\D", "", d.get("Aadhaar No.", ""))) != 12:
+        return "BAD_DATA", "Aadhaar not 12 digits"
+    if d.get("Scheme Code", "").strip().upper() not in ACTIVITY:
+        return "SCHEME_UNKNOWN", f"scheme {d.get('Scheme Code')!r}: only CC004 / CC043 are known"
+    for col in ("Disb. Date", "DOB"):
+        try:
+            f.parse_dmy(d.get(col, ""))
+        except Exception:
+            return "BAD_DATA", f"{col} {d.get(col)!r} is not a date"
+    if f.money_to_float(d.get("DP") or "0") <= 0:
+        return "BAD_DATA", "DP is 0"
+    if not d.get("NAME AS PER ADHAR", "").strip() or not d.get("VILLAGE", "").strip():
+        return "BAD_DATA", "name or village missing"
+    if re.search(r"^\s*CHECK\s*$|#NAME|ERROR", d["VILLAGE"], re.I):
+        return "BAD_DATA", f"village is {d['VILLAGE']!r} in the Excel: fill the real village"
+    if d["Scheme Code"].strip().upper() == "CC004":
+        area = d.get("_area", "")
+        if not d.get("SURVEY NO", "").strip() or not d.get("KHATA NO", "").strip() or not area:
+            return "NO_LAND", "crop loan needs SURVEY NO, KHATA NO and land area"
+        try:
+            if float(area) <= 0:
+                raise ValueError
+        except ValueError:
+            return "NO_LAND", f"land area {area!r} is not a number"
+    return None
+
+
+def run(csv_path: Path):
+    with open(csv_path, newline="", encoding="utf-8-sig") as fh:
+        rd = csv.DictReader(fh)
+        header, rows = rd.fieldnames, list(rd)
+    area_col = area_column(header)
+    for r in rows:
+        r["_area"] = re.sub(r"[^\d.]", "", r.get(area_col, "")) if area_col else ""
+    for acct, rec in progress_records(csv_path).items():         # the progress file wins over the CSV
+        for r in rows:
+            if r["Account No."] == acct:
+                r.update(rec)
+    out_header = header
+    for r in rows:                      # Excel problems are re-checked every run: a fixed row goes back to the queue
+        if r.get("Status") in ("NO_LAND", "BAD_DATA", "SCHEME_UNKNOWN") and not precheck(r):
+            r["Status"], r["Detail"] = "", "data fixed in the Excel"
+
+    def finish(r):
+        log_progress(csv_path, r["Account No."], r["Status"], r["Loan App No"], r["Detail"])
+        save_csv(csv_path, out_header, [{k: x.get(k, "") for k in out_header} for x in rows])
+
+    todo = [r for r in rows if r.get("Account No.") and not is_done(r.get("Status", ""))]
+    b = collections.Counter(("done" if r["Status"] in ("COMPLETED", "ALREADY_ON_PORTAL") else
+                             "hand" if r["Status"] in HAND else "check" if r["Status"].startswith(HOLD) else "todo")
+                            for r in rows)
+    print(f"[resume] {len(rows)} rows: {b['done']} entered, {b['hand']} hand work, {b['check']} check on portal, "
+          f"{len(todo)} to do" + ("" if area_col else "  (no LAND AREA column yet: crop rows become NO_LAND)"))
+
+    with sync_playwright() as p:
+        ctx = p.chromium.launch_persistent_context(f.PROFILE_DIR, headless=False, slow_mo=f.SLOWMO_MS,
+                                                   viewport=None, args=["--start-maximized"])
+        ctx.set_default_timeout(f.STUCK_TIMEOUT_S * 1000)
+        page = ctx.pages[0] if ctx.pages else ctx.new_page()
+        page.goto(f.BASE, wait_until="domcontentloaded")
+        print("\n  LOG IN in the browser window with the Branch User login (mobile + password + captcha).", flush=True)
+        page.wait_for_timeout(2000)
+        if f.is_logged_out(page):
+            f.require_login(page, "Not logged in yet")
+        if not f.require_role(page, "Branch User"):
+            ctx.close(); return
+        want = collections.Counter(r.get("Branch Name", "") for r in rows).most_common(1)[0][0]
+        got = f.logged_in_branch(page)
+        if want and got and not f.same_branch(got, want):
+            print(f"\n  !! WRONG LOGIN: the portal is logged in as branch '{got}', this work list is '{want}'. Nothing entered.")
+            ctx.close(); return
+        print(f"[login] branch check: portal '{got or '?'}' = work list '{want}'", flush=True)
+
+        print(f"[start] {len(todo)} rows pending\n", flush=True)
+        cnt = collections.Counter()
+        done = 0
+        for n, r in enumerate(todo, 1):
+            if os.path.exists(f.STOP_FLAG):
+                print("\n[stop] stop requested — stopping between rows"); break
+            if LIMIT and done >= LIMIT:
+                print(f"\n[stop] reached --limit {LIMIT}"); break
+            acct = r["Account No."]
+            pre = precheck(r)
+            if pre:
+                r["Status"], r["Loan App No"], r["Detail"] = pre[0], "", pre[1]
+                cnt[pre[0]] += 1
+                print(f"[{n:>4}/{len(todo)}] {acct}  {pre[0]:<21} {pre[1]}", flush=True)
+                finish(r); continue
+
+            def mark_submitting(r=r):
+                r["Status"], r["Detail"] = f"{HOLD}:submitting", "CONFIRM clicked, result not recorded yet"
+                finish(r)
+
+            stage = {"s": "start"}
+            tries = 0
+            while True:
+                tries += 1
+                print(f"\r[{n:>4}/{len(todo)}] {acct}  working...        ", end="", flush=True)
+                try:
+                    st, app, det = process_row(page, r, stage, mark_submitting)
+                    r["Status"], r["Loan App No"], r["Detail"] = st, app, det
+                    done += 1
+                    break
+                except KeyboardInterrupt:
+                    raise
+                except Exception as e:
+                    import traceback
+                    with open("errors.log", "a", encoding="utf-8") as ef:
+                        ef.write(f"\n===== {time.strftime('%Y-%m-%d %H:%M:%S')} FRESH acct={acct} stage={stage['s']} url={page.url}\n")
+                        ef.write(traceback.format_exc())
+                    msg = str(e).splitlines()[0][:120]
+                    print(f"\n    [exc] stage={stage['s']} {type(e).__name__}: {msg}", flush=True)
+                    if f.is_logged_out(page):
+                        f.require_login(page)
+                    if stage["s"] in ("submitting", "done"):
+                        r["Status"], r["Detail"] = f"{HOLD}:{stage['s']}", msg      # never re-submit blindly
+                        f.reload_to_dashboard(page)
+                        break
+                    if isinstance(e, (StuckError, PWTimeout)) and tries <= f.STUCK_RETRIES and stage["s"] in ("start", "fetched"):
+                        f.reload_to_dashboard(page)
+                        continue                                                  # nothing saved yet: retry
+                    # a draft may exist after SAVE & CONTINUE: hand work, not a blind retry
+                    r["Status"] = f"ERROR:{type(e).__name__.upper()}" if stage["s"] in SAFE_STAGES else f"{HOLD}:DRAFT"
+                    r["Detail"] = f"{stage['s']}: {msg}"
+                    f.shot(page, f"fresh_error_{acct}")
+                    f.reload_to_dashboard(page)
+                    break
+            cnt[r["Status"].split(":")[0]] += 1
+            print(f"\r[{n:>4}/{len(todo)}] {acct}  {r['Status']:<21} {r['Detail'][:70]:<70} app={r['Loan App No'] or '-'}"
+                  f" | " + "  ".join(f"{k.lower()} {v}" for k, v in cnt.items()), flush=True)
+            finish(r)
+        print(f"\n[done] " + "  ".join(f"{k.lower()} {v}" for k, v in cnt.items()) + f".  CSV: {csv_path}")
+        ctx.close()
+
+
+def cli():
+    global LIMIT
+    ap = argparse.ArgumentParser(description="Enter IS regular FRESH applications (farmers not in the portal).")
+    ap.add_argument("source", help="the bank's 'not in system' .xlsx (builds the work list) or a fresh work-list CSV")
+    ap.add_argument("--limit", type=int, default=0, help="stop after N rows entered (0 = all)")
+    ap.add_argument("--yes", action="store_true", help="no questions (panel)")
+    a = ap.parse_args()
+    LIMIT = a.limit
+    if a.source.lower().endswith(".xlsx"):
+        paths = build_from_excel(a.source)
+        print("Work list(s) ready. Start the entry with:")
+        for p in paths:
+            print(f"   .venv\\Scripts\\python fasalrin_fresh.py {p}")
+        return
+    run(Path(a.source))
+
+
+if __name__ == "__main__":
+    os.environ.setdefault("NO_PROMPT", "1")
+    f.NO_PROMPT = True
+    try:
+        cli()
+    except KeyboardInterrupt:
+        print("\n[quit] stopped; entries so far are in the progress file")
