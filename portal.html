@@ -848,7 +848,7 @@ $("resetBtn").onclick = async () => {
   const r = await post("/api/reset_hand", {csv: $("csv").value, reasons});
   if (r.error) { $("resetMsg").className = "err"; $("resetMsg").textContent = r.error; return; }
   $("resetMsg").className = ""; $("resetMsg").textContent = `${r.total} reset to RETRY: ` +
-    Object.entries(r.reset).map(([k, v]) => `${k} ${v}`).join(", ") + ". Start 'Enter applications' to retry them.";
+    Object.entries(r.reset).map(([k, v]) => `${k} ${v}`).join(", ") + ". Start the entry job again to retry them.";
   document.querySelectorAll('input[name="resetReason"]').forEach(x => x.checked = false);
   poll();
 };
@@ -1126,7 +1126,7 @@ function render(s) {
                        .concat((sm.claims || {}).check ? [["claims check on portal", sm.claims.check]] : []));
   stats($("sumStats"), Object.entries(sm.status || {}).map(([k, v]) => [label(k), v]));
   const rs = sm.reasons || [];
-  const canReset = !!s.csv && listScheme(s.csv) === "regular";
+  const canReset = !!s.csv && ["regular", "fresh"].includes(listScheme(s.csv));
   const NO_RESET = ["CHECK_PORTAL", "OTHER_BRANCH", "ERROR"];
   const ticked = new Set([...document.querySelectorAll('input[name="resetReason"]:checked')].map(x => x.value));
   $("resetHead").textContent = canReset ? "Retry" : "";

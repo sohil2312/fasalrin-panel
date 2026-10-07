@@ -100,11 +100,16 @@ def main():
         page.goto(BASE, wait_until="domcontentloaded")
         rec(None, json.dumps({"ev": "start", "url": "/"}))
         print("Recording. Log in, do the sample entries, then close the browser window.", flush=True)
-        try:
-            while ctx.pages:
-                ctx.pages[0].wait_for_timeout(1000)
-        except Exception:
-            pass
+        # keep recording while any tab is open: the portal's login can close / replace the first tab
+        closed = {"v": False}
+        ctx.on("close", lambda *_: closed.update(v=True))
+        while not closed["v"]:
+            try:
+                if not ctx.pages:
+                    break
+                ctx.pages[-1].wait_for_timeout(1000)
+            except Exception:
+                time.sleep(0.5)                     # that tab went away mid-wait: look at the tabs again
         rec(None, json.dumps({"ev": "stop", "url": ""}))
 
 

@@ -840,8 +840,10 @@ def reset_hand_work(csv_path, reasons: list[str]) -> dict:
     """IS regular work list: rows whose hand-work reason is in `reasons` -> Status RETRY (work list + progress
     file), so the next entry run tries them again. Returns {reason: rows reset}."""
     csv_path = Path(csv_path)
+    if scheme_of(csv_path) == "fresh":
+        return reset_fresh(csv_path, reasons)
     if scheme_of(csv_path) != "regular":
-        raise ValueError("reset is for IS regular work lists only")
+        raise ValueError("reset is for IS regular and IS fresh work lists only")
     want = [k for k in reasons if k in {r[0] for r in REASONS} and k not in NOT_RESETTABLE]
     if not want:
         raise ValueError("tick at least one reason that can be reset")
@@ -861,6 +863,25 @@ def reset_hand_work(csv_path, reasons: list[str]) -> dict:
         done[k] += 1
     if done:
         f.save_rows(header, rows)
+    return {"reset": dict(done), "total": sum(done.values())}
+
+
+def reset_fresh(csv_path, reasons: list[str]) -> dict:
+    """IS fresh work list: rows whose hand-work reason is in `reasons` -> back in the queue (a blank Status in the
+    progress file wins over the old one). CHECK_PORTAL (a draft may exist) and ERROR (retried anyway) never."""
+    import fasalrin_fresh as ff
+    want = [k for k in reasons if k in {r[0] for r in FRESH_REASONS} and k not in NOT_RESETTABLE]
+    if not want:
+        raise ValueError("tick at least one reason that can be reset")
+    stamp = datetime.now().strftime("%d-%m-%Y %H:%M")
+    done = collections.Counter()
+    for r in _fresh_rows(csv_path):
+        k = reason_of(r.get(f.COL_STATUS) or "", FRESH_REASONS)
+        if k not in want:
+            continue
+        ff.log_progress(csv_path, (r.get(f.COL_ACCT) or "").strip(), "", "",
+                        f"reset to retry {stamp} (was {r.get(f.COL_STATUS)})")
+        done[k] += 1
     return {"reset": dict(done), "total": sum(done.values())}
 
 

@@ -43,6 +43,7 @@ FIN_YEAR = f.FIN_YEAR
 SUBDISTRICT = "Kadana"
 DEFAULT_MOBILE = "9876543210"        # user rule: MO NO blank / not 10 digits
 DEFAULT_PIN = "389240"
+BRANCH_PIN = {"LUNAWADA": "389230"}  # user rule: every entry of this branch uses this pincode
 CASTE, FARMER_CAT, FARMER_TYPE, APP_TYPE = "ST", "OWNER", "SMALL", "Normal"
 CROP = "Castor (Rehri, Rendi, Arandi) - RF"
 LAND_TYPE, SEASON = "IRRIGATED", "KHARIF"
@@ -165,7 +166,8 @@ def match_village(want: str, options: list[str]) -> str | None:
     then consonant prefix. 'JUNA MAL / MAL' tries each name. Ambiguous or nothing -> None (hand work, no guess)."""
     opts = [o for o in options if o and o.strip().lower() != "select"]
     cons = lambda x: re.sub(r"[AEIOUY]", "", x)
-    for part in [want] + [x for x in re.split(r"[/,]", want or "") if x.strip()][::-1]:
+    parts = [x.strip() for x in re.split(r"[/,;]", want or "") if x.strip()]
+    for part in (parts if len(parts) > 1 else [want]):        # several villages: the first one the portal has
         w = norm(part)
         if not w:
             continue
@@ -196,6 +198,17 @@ def select_label(scope, name: str, label: str, page, wait_options=8):
                 return
             page.wait_for_timeout(50)
     raise RuntimeError(f"could not select {label!r} in {name}")
+
+
+def name_orders(name: str) -> list[str]:
+    """Name orders tried for Aadhaar VERIFY (user rule), surname = last word of the Excel name:
+    as in the Excel -> surname first middle -> surname first -> first surname. Duplicates dropped."""
+    w = name.split()
+    out = [name]
+    if len(w) >= 2:
+        first, sur, mid = w[0], w[-1], w[1:-1]
+        out += [" ".join([sur, first, *mid]), f"{sur} {first}", f"{first} {sur}"]
+    return list(dict.fromkeys(out))
 
 
 def relative_name(raw: str, aadhaar_name: str) -> str:
@@ -329,11 +342,28 @@ def dob_input(page):
     return p1.locator('input[name="age"]').locator("xpath=preceding::input[1]").first
 
 
-def find_location(page, village: str):
-    """Activity tab: 'Find Location?' -> Kadana + village -> PROCEED."""
+def block_of(branch: str, options: list[str]) -> str | None:
+    """The portal block (sub-district) for a branch name: Kadanagam -> Kadana, Lunawada -> Lunawada."""
+    b = norm(branch)
+    hits = [o for o in options if o and o.lower() != "select" and norm(o)
+            and (b.startswith(norm(o)) or norm(o).startswith(b) or f.same_branch(o, branch))]
+    return max(hits, key=lambda o: len(norm(o))) if hits else None
+
+
+def pick_block(page, scope, name: str, branch: str) -> str:
+    wait_for(page, lambda: len(options_of(scope, name)) > 1, 10, f"{name} options")
+    blk = block_of(branch, options_of(scope, name))
+    if not blk:
+        raise RuntimeError(f"no block in the portal list for branch {branch!r}")
+    select_label(scope, name, blk, page)
+    return blk
+
+
+def find_location(page, village: str, branch: str):
+    """Activity tab: 'Find Location?' -> the branch's block + village -> PROCEED."""
     page.locator("a", has_text=re.compile(r"Find Location", re.I)).first.click()
     m = page.locator(".modal-content:visible")
-    select_label(m, "landSubDistrictID", SUBDISTRICT, page)
+    pick_block(page, m, "landSubDistrictID", branch)
     wait_for(page, lambda: len(options_of(m, "landVillageID")) > 1, 10, "land villages")
     v = match_village(village, options_of(m, "landVillageID"))
     if not v:
@@ -381,7 +411,8 @@ def process_row(page, d: dict, stage: dict, mark_submitting):
     mobile = mob if len(mob) == 10 else DEFAULT_MOBILE
     female = d["GENDER"].strip().upper().startswith("F")
     addr = re.sub(r"\s+", " ", d["ADDRESS"]).strip(" ,")
-    pin = (re.findall(r"\b(\d{6})\b", addr) or [DEFAULT_PIN])[-1]
+    pin = BRANCH_PIN.get(d.get("Branch Name", "").strip().upper()) \
+        or (re.findall(r"\b(\d{6})\b", addr) or [d.get("_pin") or DEFAULT_PIN])[-1]
 
     stage["s"] = "start"
     f.open_fetch_popup(page)
@@ -399,30 +430,46 @@ def process_row(page, d: dict, stage: dict, mark_submitting):
     p1 = pane(page, 1)
     wait_pane(page, 1)
     select_label(p1, "applicationType", APP_TYPE, page)
-    fill_text(page, p1.locator('input[name="beneficiaryName"]').first, name)
-    p1.locator("button:visible", has_text=BTN("VERIFY")).first.click()
-    stage["s"] = "verify"
-    # verified = the VERIFY button goes away (green tick); a popup may or may not come first
-    def verify_answer():
-        t = modal_text(page)
-        if t:
-            return "popup", t
-        if not p1.locator("button:visible", has_text=BTN("VERIFY")).count():
-            return "verified", ""
-        return None
-    kind, txt = wait_for(page, verify_answer, 45, "Aadhaar VERIFY answer")
-    if kind == "popup":
-        print(f"\n    verify popup: {re.sub(r'[0-9]{12}', 'XXXXXXXXXXXX', txt)[:140]}", flush=True)
-        page.locator('.modal-content:visible button', has_text=BTN("(?:OK|CLOSE)")).first.click()
-        page.wait_for_timeout(300)
-    why = re.sub(r"\s+", " ", txt or "").replace(" OK", "").strip()[:120]
-    # "Name is not matching upto the expected limit": the Excel name is not the Aadhaar name -> skip the row
-    if re.search(r"not\s+match|mismatch", why, re.I):
+    # Aadhaar VERIFY: the Excel name first, then other orders of the same words (user rule) until one matches
+    tried, verified = [], False
+    for cand in name_orders(name):
+        try:
+            box = p1.locator('input[name="beneficiaryName"]').first
+            fill_text(page, box, cand)
+            vbtn = p1.locator("button:visible", has_text=BTN("VERIFY"))
+            wait_for(page, lambda: vbtn.count(), 6, "VERIFY button")
+        except Exception:
+            break                                   # the portal does not offer VERIFY again: stop trying
+        vbtn.first.click()
+        stage["s"] = "verify"
+        tried.append(cand)
+        # verified = the VERIFY button goes away (green tick); a popup may or may not come first
+        def verify_answer():
+            t = modal_text(page)
+            if t:
+                return "popup", t
+            if not p1.locator("button:visible", has_text=BTN("VERIFY")).count():
+                return "verified", ""
+            return None
+        kind, txt = wait_for(page, verify_answer, 45, "Aadhaar VERIFY answer")
+        if kind == "popup":
+            print(f"\n    verify popup ({cand}): {re.sub(r'[0-9]{12}', 'XXXXXXXXXXXX', txt)[:120]}", flush=True)
+            page.locator('.modal-content:visible button', has_text=BTN("(?:OK|CLOSE)")).first.click()
+            page.wait_for_timeout(300)
+        why = re.sub(r"\s+", " ", txt or "").replace(" OK", "").strip()[:120]
+        if re.search(r"not\s+match|mismatch", why, re.I):
+            continue                                # wrong order: try the next one
+        if p1.locator("button:visible", has_text=BTN("VERIFY")).count():
+            to_dashboard(page)
+            return "VERIFY_FAILED", "", f"Aadhaar VERIFY with name {cand!r}: {why}"
+        if cand != name:
+            print(f"\n    Aadhaar verified with the name as {cand!r}", flush=True)
+        name = cand                                 # the verified spelling is the Aadhaar name from here on
+        verified = True
+        break
+    if not verified:
         to_dashboard(page)
-        return "AADHAAR_MISMATCH", "", f"name {name!r} does not match Aadhaar ({why})"
-    if p1.locator("button:visible", has_text=BTN("VERIFY")).count():
-        to_dashboard(page)
-        return "VERIFY_FAILED", "", f"Aadhaar VERIFY with name {name!r}: {why}"
+        return "AADHAAR_MISMATCH", "", f"no name order matches Aadhaar (tried {', '.join(tried) or name})"[:200]
     stage["s"] = "applicant"                        # nothing saved until SAVE & CONTINUE: still safe to retry
     fill_text(page, p1.locator('input[name="beneficiaryPassbookName"]').first, name)
     pick_dob(page, dob_input(page), dob)
@@ -436,12 +483,12 @@ def process_row(page, d: dict, stage: dict, mark_submitting):
     select_label(p1, "relation", "WIFE OF" if female else "SON OF", page)
     fill_text(page, p1.locator('input[name="relativeName"]').first, relative_name(d.get("RELATIVE NAME", ""), name))
     select_label(p1, "primaryActivity", activity, page)
-    select_label(p1, "resSubDistrictId", SUBDISTRICT, page)
+    block = pick_block(page, p1, "resSubDistrictId", d["Branch Name"])
     wait_for(page, lambda: len(options_of(p1, "resVillageId")) > 1, 10, "residence villages")
     v = match_village(village, options_of(p1, "resVillageId"))
     if not v:
         to_dashboard(page)
-        return "VILLAGE_NOT_FOUND", "", f"village {village!r} not (or not uniquely) in the portal list for Kadana"
+        return "VILLAGE_NOT_FOUND", "", f"village {village!r} not (or not uniquely) in the portal list for {block}"
     select_label(p1, "resVillageId", v, page)
     ad = p1.locator('input[name="resAddress"]').first
     maxlen = int(ad.get_attribute("maxlength") or 0)
@@ -454,7 +501,7 @@ def process_row(page, d: dict, stage: dict, mark_submitting):
     want1 = {"applicationType": APP_TYPE, "beneficiaryName": name, "beneficiaryPassbookName": name,
              "gender": "FEMALE" if female else "MALE", "mobile": mobile, "casteCategory": CASTE,
              "farmerCategory": FARMER_CAT, "farmerType": FARMER_TYPE, "relation": "WIFE OF" if female else "SON OF",
-             "relativeName": rel_name, "primaryActivity": activity, "resSubDistrictId": SUBDISTRICT,
+             "relativeName": rel_name, "primaryActivity": activity, "resSubDistrictId": block,
              "resVillageId": v, "resAddress": addr_in, "resPincode": pin}
     check_form(page, p1, want1, "applicant tab",
                {k: (sl(k, val) if k in ("applicationType", "gender", "casteCategory", "farmerCategory", "farmerType",
@@ -535,7 +582,7 @@ def process_row(page, d: dict, stage: dict, mark_submitting):
         select_label(act, "liveStockCode", AH_ANIMAL, page)
         fill_text(page, act.locator('input[name="unitCount"]').first, AH_UNITS)
     try:
-        find_location(page, village)
+        find_location(page, village, d["Branch Name"])
     except VillageError:
         to_dashboard(page)
         return "VILLAGE_NOT_FOUND", "", f"land village {village!r} not (or not uniquely) in the portal list"
@@ -643,7 +690,7 @@ def precheck(d: dict) -> tuple[str, str] | None:
         return "BAD_DATA", "DP is 0"
     if not d.get("NAME AS PER ADHAR", "").strip() or not d.get("VILLAGE", "").strip():
         return "BAD_DATA", "name or village missing"
-    if re.search(r"^\s*CHECK\s*$|#NAME|ERROR", d["VILLAGE"], re.I):
+    if re.search(r"^\s*CHECK\s*$|^\s*#|#NAME|#N/A|ERROR", d["VILLAGE"], re.I):
         return "BAD_DATA", f"village is {d['VILLAGE']!r} in the Excel: fill the real village"
     if d["Scheme Code"].strip().upper() == "CC004":
         area = d.get("_area", "")
@@ -662,7 +709,9 @@ def run(csv_path: Path):
         rd = csv.DictReader(fh)
         header, rows = rd.fieldnames, list(rd)
     area_col = area_column(header)
+    pins = collections.Counter(p for r in rows for p in re.findall(r"\b(\d{6})\b", r.get("ADDRESS", "")))
     for r in rows:
+        r["_pin"] = pins.most_common(1)[0][0] if pins else DEFAULT_PIN        # this branch's usual pincode
         r["_area"] = re.sub(r"[^\d.]", "", r.get(area_col, "")) if area_col else ""
     for acct, rec in progress_records(csv_path).items():         # the progress file wins over the CSV
         for r in rows:

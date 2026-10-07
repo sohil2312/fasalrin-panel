@@ -434,7 +434,8 @@ def branch_of_list(rows, idx) -> str:
 def same_branch(portal: str, listed: str) -> bool:
     """Portal 'KIDIA' vs master 'Kidia': letters only, case-insensitive, one may be a prefix of the other.
     Spellings that differ only in vowels are the same branch too (portal 'SHEHRA' = master 'Shahera')."""
-    a, b = (re.sub(r"[^a-z]", "", s.lower()) for s in (portal, listed))
+    # w = v in transliterated Gujarati names (portal 'LUNAVADA' = master 'Lunawada')
+    a, b = (re.sub(r"[^a-z]", "", s.lower()).replace("w", "v") for s in (portal, listed))
     if not (a and b):
         return False
     ca, cb = (re.sub(r"[aeiouy]", "", s) for s in (a, b))
