@@ -198,6 +198,16 @@ def select_label(scope, name: str, label: str, page, wait_options=8):
     raise RuntimeError(f"could not select {label!r} in {name}")
 
 
+def relative_name(raw: str, aadhaar_name: str) -> str:
+    """Relative name for the portal: letters and spaces only. Blank, an Excel error (#N/A, #NAME?, ...) or a
+    placeholder (NA, N/A, NIL, -, 0) -> the farmer's Aadhaar name (user rule)."""
+    raw = (raw or "").strip()
+    if not raw or raw.startswith("#") or re.fullmatch(r"(?i)\s*(n\s*/?\s*a|nil|null|none|-+|0)\s*", raw):
+        return aadhaar_name
+    clean = re.sub(r"\s+", " ", re.sub(r"[^A-Za-z ]", " ", raw)).strip()
+    return clean or aadhaar_name
+
+
 def form_values(scope, names) -> dict:
     """{name: shown value} for inputs / selects in `scope` (select = its selected text)."""
     return scope.evaluate("""(el, names) => Object.fromEntries(names.map(n => {
@@ -424,7 +434,7 @@ def process_row(page, d: dict, stage: dict, mark_submitting):
     select_label(p1, "farmerCategory", FARMER_CAT, page)
     select_label(p1, "farmerType", FARMER_TYPE, page)
     select_label(p1, "relation", "WIFE OF" if female else "SON OF", page)
-    fill_text(page, p1.locator('input[name="relativeName"]').first, d["RELATIVE NAME"].strip(" ."))
+    fill_text(page, p1.locator('input[name="relativeName"]').first, relative_name(d.get("RELATIVE NAME", ""), name))
     select_label(p1, "primaryActivity", activity, page)
     select_label(p1, "resSubDistrictId", SUBDISTRICT, page)
     wait_for(page, lambda: len(options_of(p1, "resVillageId")) > 1, 10, "residence villages")
@@ -437,7 +447,7 @@ def process_row(page, d: dict, stage: dict, mark_submitting):
     maxlen = int(ad.get_attribute("maxlength") or 0)
     fill_text(page, ad, addr[:maxlen] if maxlen else addr)
     fill_text(page, p1.locator('input[name="resPincode"]').first, pin)
-    rel_name = d["RELATIVE NAME"].strip(" .")
+    rel_name = relative_name(d.get("RELATIVE NAME", ""), name)
     addr_in = addr[:maxlen] if maxlen else addr
     sl = lambda n, v: (lambda: select_label(p1, n, v, page))
     ft = lambda n, v: (lambda: fill_text(page, p1.locator(f'input[name="{n}"]').first, v))
