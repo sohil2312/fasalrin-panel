@@ -187,13 +187,46 @@ def select_label(scope, name: str, label: str, page, wait_options=8):
     sel.wait_for()
     wait_for(page, lambda: label in sel.evaluate("s => [...s.options].map(o => o.text.trim())"), wait_options,
              f"option {label!r} in {name}")
+    picked = lambda: sel.evaluate("s => (s.options[s.selectedIndex] || {}).text.trim()") == label
     for _ in range(5):
         sel.select_option(label=label)
         sel.dispatch_event("change")
-        page.wait_for_timeout(250)
-        if sel.evaluate("s => (s.options[s.selectedIndex] || {}).text.trim()") == label:
-            return
+        for _ in range(10):                          # poll (<= 0.5 s) instead of a fixed pause
+            if picked():
+                return
+            page.wait_for_timeout(50)
     raise RuntimeError(f"could not select {label!r} in {name}")
+
+
+def form_values(scope, names) -> dict:
+    """{name: shown value} for inputs / selects in `scope` (select = its selected text)."""
+    return scope.evaluate("""(el, names) => Object.fromEntries(names.map(n => {
+        const e = el.querySelector(`[name="${n}"]`);
+        if (!e) return [n, null];
+        return [n, e.tagName === 'SELECT' ? ((e.options[e.selectedIndex] || {}).text || '').trim() : (e.value || '').trim()];
+    }))""", list(names))
+
+
+def check_form(page, scope, want: dict, what: str, fixers: dict | None = None):
+    """Read back what the portal shows and compare with what was meant. A wrong value is set once more
+    (fixers), then checked again; still wrong -> RuntimeError (the row is never saved on a guess)."""
+    def same(a, b):
+        a, b = re.sub(r"\s+", " ", str(a or "")).strip(), re.sub(r"\s+", " ", str(b or "")).strip()
+        try:
+            return float(a) == float(b)
+        except ValueError:
+            return a.upper() == b.upper()
+    for attempt in range(2):
+        got = form_values(scope, want)
+        bad = {k: (got.get(k), v) for k, v in want.items() if not same(got.get(k), v)}
+        if not bad:
+            return
+        if attempt == 0 and fixers:
+            for k in bad:
+                if k in fixers:
+                    fixers[k]()
+            continue
+        raise RuntimeError(f"{what} check failed: " + "; ".join(f"{k}={g!r} (want {w!r})" for k, (g, w) in bad.items())[:200])
 
 
 def options_of(scope, name: str) -> list[str]:
@@ -207,7 +240,6 @@ def fill_text(page, loc, value: str):
     loc.fill(value)
     loc.dispatch_event("input")
     loc.dispatch_event("change")
-    page.wait_for_timeout(150)
 
 
 def pick_dob(page, inp, target: date):
@@ -221,7 +253,10 @@ def pick_dob(page, inp, target: date):
         inp.fill(want)
         inp.dispatch_event("input"); inp.dispatch_event("change")
         inp.press("Enter")
-        page.wait_for_timeout(500)
+        for _ in range(15):                          # Age fills in when the portal took the date
+            if accepted():
+                break
+            page.wait_for_timeout(100)
         if accepted():
             page.keyboard.press("Escape")
             return
@@ -296,7 +331,7 @@ def find_location(page, village: str):
     open_ = lambda: page.locator('.modal-content:visible select[name="landVillageID"]').count()
     for attempt in range(3):            # PROCEED sometimes does nothing the first time: re-pick the village, press again
         select_label(m, "landVillageID", v, page)
-        page.wait_for_timeout(400)
+        page.wait_for_timeout(150)
         m.locator("button", has_text=BTN("PROCEED")).first.click()
         try:
             wait_for(page, lambda: not open_(), 6, "location popup to close")
@@ -314,7 +349,7 @@ def to_dashboard(page):
     try:
         f.dismiss_ok_dialogs(page)
         f.click_side_nav(page, "/dashboard")
-        page.wait_for_timeout(800)
+        page.wait_for_timeout(400)
     except Exception:
         pass
 
@@ -369,7 +404,7 @@ def process_row(page, d: dict, stage: dict, mark_submitting):
     if kind == "popup":
         print(f"\n    verify popup: {re.sub(r'[0-9]{12}', 'XXXXXXXXXXXX', txt)[:140]}", flush=True)
         page.locator('.modal-content:visible button', has_text=BTN("(?:OK|CLOSE)")).first.click()
-        page.wait_for_timeout(800)
+        page.wait_for_timeout(300)
     why = re.sub(r"\s+", " ", txt or "").replace(" OK", "").strip()[:120]
     # "Name is not matching upto the expected limit": the Excel name is not the Aadhaar name -> skip the row
     if re.search(r"not\s+match|mismatch", why, re.I):
@@ -402,6 +437,27 @@ def process_row(page, d: dict, stage: dict, mark_submitting):
     maxlen = int(ad.get_attribute("maxlength") or 0)
     fill_text(page, ad, addr[:maxlen] if maxlen else addr)
     fill_text(page, p1.locator('input[name="resPincode"]').first, pin)
+    rel_name = d["RELATIVE NAME"].strip(" .")
+    addr_in = addr[:maxlen] if maxlen else addr
+    sl = lambda n, v: (lambda: select_label(p1, n, v, page))
+    ft = lambda n, v: (lambda: fill_text(page, p1.locator(f'input[name="{n}"]').first, v))
+    want1 = {"applicationType": APP_TYPE, "beneficiaryName": name, "beneficiaryPassbookName": name,
+             "gender": "FEMALE" if female else "MALE", "mobile": mobile, "casteCategory": CASTE,
+             "farmerCategory": FARMER_CAT, "farmerType": FARMER_TYPE, "relation": "WIFE OF" if female else "SON OF",
+             "relativeName": rel_name, "primaryActivity": activity, "resSubDistrictId": SUBDISTRICT,
+             "resVillageId": v, "resAddress": addr_in, "resPincode": pin}
+    check_form(page, p1, want1, "applicant tab",
+               {k: (sl(k, val) if k in ("applicationType", "gender", "casteCategory", "farmerCategory", "farmerType",
+                                        "relation", "primaryActivity", "resVillageId") else ft(k, val))
+                for k, val in want1.items() if k not in ("beneficiaryName", "resSubDistrictId")})
+    got_aadhaar = re.sub(r"\D", "", form_values(p1, ["aadharNumber"]).get("aadharNumber") or "")
+    if got_aadhaar and got_aadhaar[-4:] != aadhaar[-4:]:
+        raise RuntimeError(f"applicant tab shows Aadhaar ending {got_aadhaar[-4:]}, want {aadhaar[-4:]}")
+    dob_box = dob_input(page)
+    if dob_box.input_value().strip() != f"{dob:%d/%m/%Y}":
+        pick_dob(page, dob_box, dob)
+        if dob_box.input_value().strip() != f"{dob:%d/%m/%Y}":
+            raise RuntimeError(f"DOB shows {dob_box.input_value()!r}, want {dob:%d/%m/%Y}")
     save1 = p1.locator("button", has_text=BTN("(?:SAVE|UPDATE) & CONTINUE")).first
     save1.click()
     stage["s"] = "applicant_saved"
@@ -419,6 +475,10 @@ def process_row(page, d: dict, stage: dict, mark_submitting):
     fill_text(page, p2.locator('input[name="accountNumber"]').first, acct)
     fill_text(page, p2.locator('input[name="confirmAccountNumber"]').first, acct)
     select_label(p2, "accountHolder", "SINGLE", page)
+    check_form(page, p2, {"accountNumber": acct, "confirmAccountNumber": acct, "accountHolder": "SINGLE"}, "account tab",
+               {"accountNumber": lambda: fill_text(page, p2.locator('input[name="accountNumber"]').first, acct),
+                "confirmAccountNumber": lambda: fill_text(page, p2.locator('input[name="confirmAccountNumber"]').first, acct),
+                "accountHolder": lambda: select_label(p2, "accountHolder", "SINGLE", page)})
     save2 = p2.locator("button", has_text=BTN("(?:SAVE|UPDATE) & CONTINUE")).first
     save2.click()
     stage["s"] = "account_saved"
@@ -434,6 +494,8 @@ def process_row(page, d: dict, stage: dict, mark_submitting):
     fill_amount(page, dl_in, dp)
     wait_for(page, lambda: f.money_to_float(dl_in.input_value()) == dp and f.money_to_float(elig_in.input_value()) == dp,
              5, "financial amounts to stick")
+    if date_in.input_value().strip() != f"{disb:%d/%m/%Y}":
+        raise RuntimeError(f"financial tab date shows {date_in.input_value()!r}, want {disb:%d/%m/%Y}")
     save3 = fin.locator("button", has_text=BTN("SAVE & CONTINUE")).first
     save3.click()
     stage["s"] = "financial_saved"
@@ -468,6 +530,25 @@ def process_row(page, d: dict, stage: dict, mark_submitting):
         to_dashboard(page)
         return "VILLAGE_NOT_FOUND", "", f"land village {village!r} not (or not uniquely) in the portal list"
     wait_for(page, lambda: f.money_to_float(ls_in.input_value()) == dp, 5, "activity amount to stick")
+    if scheme == "CC004":
+        want4 = {"cropCode": CROP, "surveyNumber": d["SURVEY NO"], "khataNumber": d["KHATA NO"], "landArea": d["_area"],
+                 "landType": LAND_TYPE, "seasonCode": SEASON}
+        fix4 = {"cropCode": lambda: select_label(act, "cropCode", CROP, page),
+                "landType": lambda: select_label(act, "landType", LAND_TYPE, page),
+                "seasonCode": lambda: select_label(act, "seasonCode", SEASON, page),
+                **{k: (lambda k=k: fill_text(page, act.locator(f'input[name="{k}"]').first, want4[k]))
+                   for k in ("surveyNumber", "khataNumber", "landArea")}}
+    else:
+        want4 = {"stockCount": AH_CATEGORY, "liveStockCode": AH_ANIMAL, "unitCount": AH_UNITS}
+        fix4 = {"stockCount": lambda: select_label(act, "stockCount", AH_CATEGORY, page),
+                "liveStockCode": lambda: select_label(act, "liveStockCode", AH_ANIMAL, page),
+                "unitCount": lambda: fill_text(page, act.locator('input[name="unitCount"]').first, AH_UNITS)}
+    check_form(page, act, want4, "activity tab", fix4)
+    loc_txt = form_values(act, ["landLocation"]).get("landLocation") or ""
+    if loc_txt and norm(v) not in norm(loc_txt):
+        raise RuntimeError(f"land location shows {loc_txt!r}, want village {v!r}")
+    if act_date.count() and act_date.input_value().strip() != f"{disb:%d/%m/%Y}":
+        raise RuntimeError(f"activity date shows {act_date.input_value()!r}, want {disb:%d/%m/%Y}")
     save4 = act.locator("button", has_text=BTN("SAVE & CONTINUE")).first
     save4.click()
     stage["s"] = "activity_saved"
@@ -486,9 +567,12 @@ def process_row(page, d: dict, stage: dict, mark_submitting):
 
     wait_for(page, lambda: "/loan-application-preview" in page.url and "Application Status" in f.body_text(page),
              f.STUCK_TIMEOUT_S, "preview page")
-    page.wait_for_timeout(400)
+    page.wait_for_timeout(200)
     pv = re.sub(r"\s+", " ", f.body_text(page))
     problems = []
+    # the name is checked where the preview shows it (label "...As per Aadhaar")
+    if re.search(r"As per Aadhaar", pv, re.I) and not re.search(re.escape(re.sub(r"\s+", " ", name)), pv, re.I):
+        problems.append("farmer name")
     for pat, what in [(rf"Account Number\s*{acct}\b", "account"),
                       (rf"Aadhaar No\.\s*XXXX-XXXX-{aadhaar[-4:]}", "aadhaar last-4"),
                       (rf"KCC loan sanctioned / KCC renewed on\s*{disb:%d/%m/%Y}", "sanction date")]:
@@ -518,7 +602,7 @@ def process_row(page, d: dict, stage: dict, mark_submitting):
     m = re.search(r"Loan application\s*([0-9]+)\s*submitted", txt, re.I)
     page.locator('.modal-content:visible button', has_text=BTN("OK")).first.click()
     stage["s"] = "done"
-    page.wait_for_timeout(600)
+    page.wait_for_timeout(300)
     kind = f"{activity}" + (f" {CROP} {d['_area']} {LAND_TYPE}" if scheme == "CC004" else f" {AH_CATEGORY} {AH_ANIMAL} x{AH_UNITS}")
     return "COMPLETED", m.group(1) if m else "", f"{v} · DP {dp} · {kind}"
 
@@ -591,7 +675,7 @@ def run(csv_path: Path):
           f"{len(todo)} to do" + ("" if area_col else "  (no LAND AREA column yet: crop rows become NO_LAND)"))
 
     with sync_playwright() as p:
-        ctx = p.chromium.launch_persistent_context(f.PROFILE_DIR, headless=False, slow_mo=f.SLOWMO_MS,
+        ctx = p.chromium.launch_persistent_context(f.PROFILE_DIR, headless=False, slow_mo=0,
                                                    viewport=None, args=["--start-maximized"])
         ctx.set_default_timeout(f.STUCK_TIMEOUT_S * 1000)
         page = ctx.pages[0] if ctx.pages else ctx.new_page()
