@@ -406,7 +406,10 @@ class Handler(BaseHTTPRequestHandler):
         if self.path in ("/", "/index.html"):
             self._send(200, (ROOT / "portal.html").read_bytes(), "text/html; charset=utf-8")
         elif self.path == "/sample/fresh.csv":          # IS fresh: headings + dummy rows to fill in
-            data = (ROOT / "samples" / "is_fresh_sample.csv").read_bytes()
+            sample = ROOT / "samples" / "is_fresh_sample.csv"
+            if not sample.exists():
+                return self._send(404, {"error": "sample file missing: restart the panel to update it"})
+            data = sample.read_bytes()
             self.send_response(200)
             self.send_header("Content-Type", "text/csv; charset=utf-8")
             self.send_header("Content-Disposition", 'attachment; filename="is_fresh_sample.csv"')

@@ -63,6 +63,8 @@ def get(url: str, timeout=20, accept: str | None = None) -> bytes:
 
 def is_data(rel: str) -> bool:
     parts = rel.split("/")
+    if parts[0] == "samples":                          # dummy sample files shipped with the code
+        return False
     return parts[0] in DATA_DIRS or parts[0].startswith(".pw_profile") or Path(rel).suffix.lower() in DATA_EXT
 
 
@@ -97,6 +99,9 @@ def main() -> int:
         print("[update] no update check - starting with the current version")
         return 0
     have = VERSION.read_text().strip() if VERSION.exists() else ""
+    # copies made by an older updater skipped the sample files: fetch once more to add them
+    if latest == have and not (APP / "samples").exists():
+        have = ""
     if latest == have:
         print(f"[update] up to date ({latest[:7]})")
         return 0
