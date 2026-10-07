@@ -557,6 +557,7 @@ PRI_REASONS = [   # PRI additional work lists
 
 FRESH_REASONS = [   # IS fresh work lists
     ("EXISTS_ON_PORTAL",     "Already on portal",   "FETCH found this Aadhaar: the farmer exists - use IS regular entry or check by hand"),
+    ("AADHAAR_MISMATCH",     "Aadhaar name mismatch", "NAME AS PER ADHAR does not match the Aadhaar (portal: name not matching): correct the name in the file and upload again"),
     ("VERIFY_FAILED",        "Aadhaar verify failed", "Aadhaar VERIFY did not pass with NAME AS PER ADHAR: correct the name in the Excel"),
     ("VILLAGE_NOT_FOUND",    "Village not found",   "VILLAGE is not (or not uniquely) in the portal's Kadana list: correct it in the Excel"),
     ("NO_LAND",              "No land details",     "Crop loan (CC004) needs SURVEY NO, KHATA NO and land area in the Excel"),

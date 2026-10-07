@@ -50,7 +50,7 @@ AH_CATEGORY, AH_ANIMAL, AH_UNITS = "DAIRY", "COW", "4"
 ACTIVITY = {"CC004": "Agri Crops", "CC043": "Animal Husbandry"}
 
 OUT_COLS = ["Status", "Loan App No", "Detail"]
-DONE = {"COMPLETED", "ALREADY_ON_PORTAL", "EXISTS_ON_PORTAL", "VERIFY_FAILED", "VILLAGE_NOT_FOUND", "NO_LAND",
+DONE = {"COMPLETED", "ALREADY_ON_PORTAL", "EXISTS_ON_PORTAL", "AADHAAR_MISMATCH", "VERIFY_FAILED", "VILLAGE_NOT_FOUND", "NO_LAND",
         "BAD_DATA", "APPLICANT_INCOMPLETE", "SCHEME_UNKNOWN"}
 HAND = DONE - {"COMPLETED", "ALREADY_ON_PORTAL"}
 HOLD = "CHECK_PORTAL"
@@ -293,10 +293,17 @@ def find_location(page, village: str):
     v = match_village(village, options_of(m, "landVillageID"))
     if not v:
         raise VillageError(village)
-    select_label(m, "landVillageID", v, page)
-    m.locator("button", has_text=BTN("PROCEED")).first.click()
-    wait_for(page, lambda: not page.locator('.modal-content:visible select[name="landVillageID"]').count(), 10,
-             "location popup to close")
+    open_ = lambda: page.locator('.modal-content:visible select[name="landVillageID"]').count()
+    for attempt in range(3):            # PROCEED sometimes does nothing the first time: re-pick the village, press again
+        select_label(m, "landVillageID", v, page)
+        page.wait_for_timeout(400)
+        m.locator("button", has_text=BTN("PROCEED")).first.click()
+        try:
+            wait_for(page, lambda: not open_(), 6, "location popup to close")
+            return
+        except StuckError:
+            continue
+    raise StuckError("location popup did not close after PROCEED (3 tries)")
 
 
 class VillageError(RuntimeError):
@@ -363,9 +370,13 @@ def process_row(page, d: dict, stage: dict, mark_submitting):
         print(f"\n    verify popup: {re.sub(r'[0-9]{12}', 'XXXXXXXXXXXX', txt)[:140]}", flush=True)
         page.locator('.modal-content:visible button', has_text=BTN("(?:OK|CLOSE)")).first.click()
         page.wait_for_timeout(800)
+    why = re.sub(r"\s+", " ", txt or "").replace(" OK", "").strip()[:120]
+    # "Name is not matching upto the expected limit": the Excel name is not the Aadhaar name -> skip the row
+    if re.search(r"not\s+match|mismatch", why, re.I):
+        to_dashboard(page)
+        return "AADHAAR_MISMATCH", "", f"name {name!r} does not match Aadhaar ({why})"
     if p1.locator("button:visible", has_text=BTN("VERIFY")).count():
         to_dashboard(page)
-        why = re.sub(r"\s+", " ", txt)[:120]
         return "VERIFY_FAILED", "", f"Aadhaar VERIFY with name {name!r}: {why}"
     stage["s"] = "applicant"                        # nothing saved until SAVE & CONTINUE: still safe to retry
     fill_text(page, p1.locator('input[name="beneficiaryPassbookName"]').first, name)
