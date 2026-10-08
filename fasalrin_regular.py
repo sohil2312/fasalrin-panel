@@ -150,6 +150,26 @@ BTN = lambda name: re.compile(rf"^\s*{name}\s*$", re.I)
 # ----------------------------------------------------------------------------
 # helpers
 # ----------------------------------------------------------------------------
+_VD = [[0, 1, 2, 3, 4, 5, 6, 7, 8, 9], [1, 2, 3, 4, 0, 6, 7, 8, 9, 5], [2, 3, 4, 0, 1, 7, 8, 9, 5, 6],
+       [3, 4, 0, 1, 2, 8, 9, 5, 6, 7], [4, 0, 1, 2, 3, 9, 5, 6, 7, 8], [5, 9, 8, 7, 6, 0, 4, 3, 2, 1],
+       [6, 5, 9, 8, 7, 1, 0, 4, 3, 2], [7, 6, 5, 9, 8, 2, 1, 0, 4, 3], [8, 7, 6, 5, 9, 3, 2, 1, 0, 4],
+       [9, 8, 7, 6, 5, 4, 3, 2, 1, 0]]
+_VP = [[0, 1, 2, 3, 4, 5, 6, 7, 8, 9], [1, 5, 7, 6, 2, 8, 3, 0, 9, 4], [5, 8, 0, 3, 7, 9, 6, 1, 4, 2],
+       [8, 9, 1, 6, 0, 4, 3, 5, 2, 7], [9, 4, 5, 3, 1, 2, 6, 8, 7, 0], [4, 2, 8, 6, 5, 7, 3, 9, 0, 1],
+       [2, 7, 9, 3, 8, 0, 6, 4, 1, 5], [7, 0, 4, 6, 9, 1, 3, 2, 5, 8]]
+
+
+def aadhaar_valid(n: str) -> bool:
+    """12 digits, not starting with 0 / 1, and the Verhoeff check digit right (what the portal checks):
+    a typo in an Aadhaar number almost always fails it."""
+    if not re.fullmatch(r"[2-9]\d{11}", n or ""):
+        return False
+    c = 0
+    for i, ch in enumerate(reversed(n)):
+        c = _VD[c][_VP[i % 8][int(ch)]]
+    return c == 0
+
+
 def parse_dmy(s: str) -> date:
     d, m, y = (int(x) for x in re.split(r"[-/]", s.strip()))
     return date(y, m, d)
@@ -374,6 +394,8 @@ def fetch_record(page, aadhaar: str) -> str:
             return "exists"
         if re.search(r"Kindly click OK and enter farmer-details", t, re.I):
             return "not_in_system"
+        if re.search(r"enter (a )?valid Aadhaar", t, re.I):
+            return "invalid_aadhaar"
         if t and "Fetch record by Aadhaar" not in t:
             return "other:" + t[:160]
         return None
@@ -660,8 +682,12 @@ def pick_calendar_date(page, date_input, target: date):
 PRIMARY_ACTIVITY_DEFAULT = "Agri Crops"   # picked when the portal leaves Primary Activity blank
 
 
-def ensure_primary_activity(page):
-    """Applicant tab: if 'Primary Activity' dropdown is unselected, choose PRIMARY_ACTIVITY_DEFAULT."""
+SCHEME_ACTIVITY = {"CC043": "Animal Husbandry", "CC004": "Agri Crops"}   # user rule: scheme code -> activity
+
+
+def ensure_primary_activity(page, want: str | None = None):
+    """Applicant tab: 'Primary Activity' = `want` (from the Scheme Code: CC043 Animal Husbandry, CC004 Agri Crops),
+    set even when the portal shows something else; without a scheme only a blank one gets PRIMARY_ACTIVITY_DEFAULT."""
     handle = page.evaluate_handle("""() => {
         const lab = [...document.querySelectorAll('#formTabs-tabpane-1 label')]
             .find(l => /^\\s*Primary Activity/i.test(l.textContent || ''));
@@ -673,26 +699,41 @@ def ensure_primary_activity(page):
     if el is None:
         return
     cur = el.evaluate("s => (s.options[s.selectedIndex] || {}).text || ''").strip()
-    if cur and cur.lower() != "select":
+    target = want or PRIMARY_ACTIVITY_DEFAULT
+    if cur == target or (not want and cur and cur.lower() != "select"):
         return
-    el.select_option(label=PRIMARY_ACTIVITY_DEFAULT)
+    if el.evaluate("s => s.disabled"):
+        raise RuntimeError(f"Primary Activity is locked at {cur!r}, scheme needs {target!r}")
+    el.select_option(label=target)
     el.dispatch_event("input"); el.dispatch_event("change")
-    page.wait_for_timeout(300)
+    for _ in range(10):
+        if el.evaluate("s => (s.options[s.selectedIndex] || {}).text || ''").strip() == target:
+            break
+        page.wait_for_timeout(50)
     got = el.evaluate("s => (s.options[s.selectedIndex] || {}).text || ''").strip()
-    if got != PRIMARY_ACTIVITY_DEFAULT:
+    if got != target:
         raise RuntimeError(f"could not set Primary Activity (now {got!r})")
-    print(f"\n    primary activity was blank -> {PRIMARY_ACTIVITY_DEFAULT}", flush=True)
+    print(f"\n    primary activity {cur or 'blank'!r} -> {target}", flush=True)
 
 
 # ----------------------------------------------------------------------------
 # process one CSV row -> (status, drawing_limit_entered, app_no, detail)
 # ----------------------------------------------------------------------------
-def process_row(page, acct: str, aadhaar: str, disb: date, dp: int, stage: dict, mark_submitting=None):
+def process_row(page, acct: str, aadhaar: str, disb: date, dp: int, stage: dict, mark_submitting=None,
+                scheme: str = ""):
+    activity = SCHEME_ACTIVITY.get((scheme or "").strip().upper())
     stage["s"] = "start"
     open_fetch_popup(page)
     res = fetch_record(page, aadhaar)
     stage["s"] = "fetched"
 
+    if res == "invalid_aadhaar":                  # portal: "Please enter valid Aadhaar Number"
+        f_close = page.locator('.modal-content:visible button', has_text=BTN("(?:BACK|CLOSE|CANCEL)"))
+        if f_close.count():
+            f_close.first.click()
+        click_side_nav(page, "/dashboard")
+        page.wait_for_timeout(500)
+        return "NO_AADHAAR", "", "", f"portal: Please enter valid Aadhaar Number (ending {aadhaar[-4:]})"
     if res == "not_in_system":
         page.locator('.modal-content:visible button', has_text=BTN("OK")).first.click()
         page.wait_for_timeout(800)
@@ -732,7 +773,7 @@ def process_row(page, acct: str, aadhaar: str, disb: date, dp: int, stage: dict,
         if at.evaluate("s => (s.options[s.selectedIndex]||{}).text.trim()") == "Normal":
             break
     at.dispatch_event("change")
-    ensure_primary_activity(page)
+    ensure_primary_activity(page, activity)
     pane(page, 1).locator("button", has_text=BTN("UPDATE & CONTINUE")).first.click()
     stage["s"] = "applicant"
 
@@ -790,6 +831,11 @@ def process_row(page, acct: str, aadhaar: str, disb: date, dp: int, stage: dict,
     # ---- 4. Activity ----
     wait_pane(page, 4, retry_btn=fin_save)
     act = page.locator("#activity")
+    if activity:                                  # open the activity of the scheme (CC043 AH / CC004 Agri Crops)
+        ab = act.locator("button", has_text=BTN(re.escape(activity)))
+        if ab.count():
+            ab.first.click()
+            page.wait_for_timeout(300)
     ls_in = act.locator('input[name="loanSanctionedAmount"]').first
     try:
         ls_in.wait_for(timeout=4000)
@@ -1088,8 +1134,9 @@ def main():
                 cnt["ERROR"] += 1
                 print(f"[{walked:>4}/{total}] {acct}  OTHER_BRANCH")
                 finish(r); continue
-            if len(aadhaar) != 12:
-                r[s_i], r[de_i] = "NO_AADHAAR", f"aadhaar={r[ad_i].strip()!r}"
+            if len(aadhaar) != 12 or not aadhaar_valid(aadhaar):
+                r[s_i], r[de_i] = "NO_AADHAAR", (f"aadhaar={r[ad_i].strip()!r}" if len(aadhaar) != 12 else
+                                                 f"Aadhaar ending {aadhaar[-4:]} fails the check digit (typo?)")
                 cnt["NO_AADHAAR"] += 1
                 print(f"[{walked:>4}/{total}] {acct}  NO_AADHAAR")
                 finish(r); continue
@@ -1114,7 +1161,8 @@ def main():
                 stage = {"s": "start"}
                 print(f"\r[{walked:>4}/{total}] {acct}  working...        ", end="", flush=True)
                 try:
-                    status, dl, app_no, detail = process_row(page, acct, aadhaar, disb, dp, stage, mark_submitting)
+                    status, dl, app_no, detail = process_row(page, acct, aadhaar, disb, dp, stage, mark_submitting,
+                                                             r[idx["Scheme Code"]] if "Scheme Code" in idx else "")
                     if status == "AADHAAR_REVERIFY" and acct in reverify_retry:
                         detail = f"{detail} {REVERIFY_RETRIED}"      # the one retry failed too: hand work for good
                     r[s_i], r[dl_i], r[no_i], r[de_i] = status, dl, app_no, detail

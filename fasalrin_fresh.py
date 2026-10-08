@@ -465,7 +465,7 @@ def process_row(page, d: dict, stage: dict, mark_submitting):
     if d.get("_draft"):
         # a draft this script left on the portal (reset to retry): finish it with the IS regular flow, which opens
         # the farmer's application, walks the saved tabs and submits; an already submitted one is caught on the preview
-        st, _dl, app, det = f.process_row(page, acct, aadhaar, disb, dp, stage, mark_submitting)
+        st, _dl, app, det = f.process_row(page, acct, aadhaar, disb, dp, stage, mark_submitting, scheme)
         if st in ("COMPLETED", "ALREADY_ON_PORTAL"):
             return st, app, f"draft finished · {det}"
         if st != "NOT_IN_SYSTEM":                    # NOT_IN_SYSTEM = the draft is gone: enter it fresh below
@@ -501,6 +501,9 @@ def process_row(page, d: dict, stage: dict, mark_submitting):
             f.shot(page, f"fresh_exists_{acct}")
             to_dashboard(page)
             return "EXISTS_ON_PORTAL", "", "Beneficiary details exist: OK did not open the form (account not in its list?)"
+    elif res == "invalid_aadhaar":
+        to_dashboard(page)
+        return "BAD_DATA", "", "portal: Please enter valid Aadhaar Number - correct it in the file"
     elif res != "not_in_system":
         raise RuntimeError(f"unexpected FETCH response: {res}")
     else:
@@ -776,6 +779,8 @@ def precheck(d: dict) -> tuple[str, str] | None:
     """Row problems found without the browser -> (status, detail)."""
     if len(re.sub(r"\D", "", d.get("Aadhaar No.", ""))) != 12:
         return "BAD_DATA", "Aadhaar not 12 digits"
+    if not f.aadhaar_valid(re.sub(r"\D", "", d.get("Aadhaar No.", ""))):
+        return "BAD_DATA", "Aadhaar fails the check digit (typo?): correct it in the file"
     if d.get("Scheme Code", "").strip().upper() not in ACTIVITY:
         return "SCHEME_UNKNOWN", f"scheme {d.get('Scheme Code')!r}: only CC004 / CC043 are known"
     for col in ("Disb. Date", "DOB"):
