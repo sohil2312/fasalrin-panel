@@ -185,9 +185,19 @@ def match_village(want: str, options: list[str]) -> str | None:
     return None
 
 
+def locked(loc) -> bool:
+    """A field the portal fills itself and does not let us change (known farmer: disabled / read-only)."""
+    try:
+        return loc.evaluate("e => e.disabled || e.readOnly || e.getAttribute('aria-disabled') === 'true'")
+    except Exception:
+        return False
+
+
 def select_label(scope, name: str, label: str, page, wait_options=8):
     sel = scope.locator(f'select[name="{name}"]').first
     sel.wait_for()
+    if locked(sel):
+        return                                       # portal-owned value: leave it
     wait_for(page, lambda: label in sel.evaluate("s => [...s.options].map(o => o.text.trim())"), wait_options,
              f"option {label!r} in {name}")
     picked = lambda: sel.evaluate("s => (s.options[s.selectedIndex] || {}).text.trim()") == label
@@ -219,6 +229,7 @@ def form_values(scope, names) -> dict:
     return scope.evaluate("""(el, names) => Object.fromEntries(names.map(n => {
         const e = el.querySelector(`[name="${n}"]`);
         if (!e) return [n, null];
+        if (e.disabled || e.readOnly) return [n, {locked: true}];
         return [n, e.tagName === 'SELECT' ? ((e.options[e.selectedIndex] || {}).text || '').trim() : (e.value || '').trim()];
     }))""", list(names))
 
@@ -234,7 +245,8 @@ def check_form(page, scope, want: dict, what: str, fixers: dict | None = None):
             return a.upper() == b.upper()
     for attempt in range(2):
         got = form_values(scope, want)
-        bad = {k: (got.get(k), v) for k, v in want.items() if not same(got.get(k), v)}
+        bad = {k: (got.get(k), v) for k, v in want.items()
+               if not isinstance(got.get(k), dict) and not same(got.get(k), v)}   # locked fields: the portal's
         if not bad:
             return
         if attempt == 0 and fixers:
@@ -251,6 +263,8 @@ def options_of(scope, name: str) -> list[str]:
 
 def fill_text(page, loc, value: str):
     loc.wait_for()
+    if locked(loc):
+        return                                       # portal-owned value: leave it
     loc.click()
     loc.fill("")
     loc.fill(value)
@@ -420,13 +434,27 @@ def process_row(page, d: dict, stage: dict, mark_submitting):
     f.open_fetch_popup(page)
     res = f.fetch_record(page, aadhaar)
     stage["s"] = "fetched"
-    if res == "exists":
-        page.locator('.modal-content:visible button', has_text=BTN("(?:BACK TO DASHBOARD|OK)")).first.click()
-        to_dashboard(page)
-        return "EXISTS_ON_PORTAL", "", "portal already knows this Aadhaar: use IS regular entry / check by hand"
-    if res != "not_in_system":
+    known = res == "exists"
+    if known:
+        sel = page.locator('.modal-content:visible select[name="accountNumbers"]')
+        offered = sel.first.evaluate("s => [...s.options].map(o => o.value.trim())") if sel.count() else []
+        new_btn = page.locator(".modal-content:visible button", has_text=re.compile(r"^\s*(?:ADD\s+)?NEW\b", re.I))
+        if acct in offered or not new_btn.count():
+            page.locator('.modal-content:visible button', has_text=BTN("(?:BACK TO DASHBOARD|OK|CLOSE)")).first.click()
+            to_dashboard(page)
+            why = ("this account is already on the portal for this Aadhaar: use IS regular entry" if acct in offered
+                   else "portal knows this Aadhaar, account not in its list and no NEW button: check by hand")
+            return "EXISTS_ON_PORTAL", "", why
+        print(f"\n    Aadhaar known, account {acct} not in its list -> NEW", flush=True)
+        new_btn.first.click()
+        page.wait_for_timeout(500)
+        ok = page.locator('.modal-content:visible button', has_text=BTN("(?:OK|YES|CONFIRM|PROCEED)"))
+        if ok.count() and f.active_pane(page) != "formTabs-tabpane-1":
+            ok.first.click()                          # a confirmation after NEW, if the portal asks one
+    elif res != "not_in_system":
         raise RuntimeError(f"unexpected FETCH response: {res}")
-    page.locator('.modal-content:visible button', has_text=BTN("OK")).first.click()
+    else:
+        page.locator('.modal-content:visible button', has_text=BTN("OK")).first.click()
 
     # ---- 1. Applicant ----
     p1 = pane(page, 1)
@@ -434,7 +462,24 @@ def process_row(page, d: dict, stage: dict, mark_submitting):
     select_label(p1, "applicationType", APP_TYPE, page)
     # Aadhaar VERIFY: the Excel name first, then other orders of the same words (user rule) until one matches
     tried, verified = [], False
-    for cand in name_orders(name):
+    if known:
+        page.wait_for_timeout(800)
+        portal_name = (form_values(p1, ["beneficiaryName"]).get("beneficiaryName") or "")
+        portal_name = "" if isinstance(portal_name, dict) else portal_name.strip()
+        if not portal_name:
+            portal_name = p1.locator('input[name="beneficiaryName"]').first.input_value().strip()
+        if p1.locator("button:visible", has_text=BTN("REVERIFY")).count():
+            why = f.reverify_aadhaar(page)
+            if why:
+                to_dashboard(page)
+                return "VERIFY_FAILED", "", f"known farmer, NEW application: {why}"[:200]
+            verified = True
+        elif not p1.locator("button:visible", has_text=BTN("VERIFY")).count():
+            verified = True                           # already verified on the portal
+        if verified:
+            name = p1.locator('input[name="beneficiaryName"]').first.input_value().strip() or portal_name or name
+            print(f"    known farmer: Aadhaar already verified as {name!r}", flush=True)
+    for cand in ([] if verified else name_orders(name)):
         try:
             box = p1.locator('input[name="beneficiaryName"]').first
             fill_text(page, box, cand)
@@ -474,7 +519,8 @@ def process_row(page, d: dict, stage: dict, mark_submitting):
         return "AADHAAR_MISMATCH", "", f"no name order matches Aadhaar (tried {', '.join(tried) or name})"[:200]
     stage["s"] = "applicant"                        # nothing saved until SAVE & CONTINUE: still safe to retry
     fill_text(page, p1.locator('input[name="beneficiaryPassbookName"]').first, name)
-    pick_dob(page, dob_input(page), dob)
+    if not locked(dob_input(page)):                 # known farmer: the portal's DOB may be locked
+        pick_dob(page, dob_input(page), dob)
     select_label(p1, "gender", "FEMALE" if female else "MALE", page)
     if p1.locator('select[name="isMobileRequired"]:visible').count():
         select_label(p1, "isMobileRequired", "Yes", page)
@@ -513,7 +559,7 @@ def process_row(page, d: dict, stage: dict, mark_submitting):
     if got_aadhaar and got_aadhaar[-4:] != aadhaar[-4:]:
         raise RuntimeError(f"applicant tab shows Aadhaar ending {got_aadhaar[-4:]}, want {aadhaar[-4:]}")
     dob_box = dob_input(page)
-    if dob_box.input_value().strip() != f"{dob:%d/%m/%Y}":
+    if not locked(dob_box) and dob_box.input_value().strip() != f"{dob:%d/%m/%Y}":
         pick_dob(page, dob_box, dob)
         if dob_box.input_value().strip() != f"{dob:%d/%m/%Y}":
             raise RuntimeError(f"DOB shows {dob_box.input_value()!r}, want {dob:%d/%m/%Y}")
