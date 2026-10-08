@@ -533,10 +533,22 @@ def pane(page, n: int):
     return page.locator(f"#formTabs-tabpane-{n}")
 
 
+def name_orders(name: str) -> list[str]:
+    """Name orders tried for Aadhaar (re)verify (user rule), surname = last word of the name given:
+    as given -> surname first middle -> surname first -> first surname. Duplicates dropped."""
+    w = (name or "").split()
+    out = [" ".join(w)]
+    if len(w) >= 2:
+        first, sur, mid = w[0], w[-1], w[1:-1]
+        out += [" ".join([sur, first, *mid]), f"{sur} {first}", f"{first} {sur}"]
+    return list(dict.fromkeys(x for x in out if x))
+
+
 def reverify_aadhaar(page) -> str | None:
-    """Applicant tab shows REVERIFY (Aadhaar must be re-verified): REVERIFY -> dialog VERIFY -> wait until the
-    REVERIFY button is gone (as the user showed on a sample account). None = nothing to do / verified;
-    otherwise the reason it did not verify."""
+    """Applicant tab shows REVERIFY (Aadhaar must be re-verified): REVERIFY -> 'Verify Aadhaar Number' dialog ->
+    VERIFY -> verified when REVERIFY and VERIFY are gone (as the user showed on a sample account). When the
+    portal says the name does not match, the dialog's Name (As per Aadhaar) is tried in the other orders
+    (surname first middle, surname first, first surname). None = nothing to do / verified; otherwise why not."""
     rev = page.locator("button:visible", has_text=BTN("REVERIFY"))
     if not rev.count():
         return None
@@ -547,21 +559,56 @@ def reverify_aadhaar(page) -> str | None:
         wait_for(page, lambda: ver.count(), 15, "VERIFY in the reverify dialog")
     except StuckError:
         return "REVERIFY clicked but no VERIFY button appeared"
-    ver.last.click()
-    try:
-        wait_for(page, lambda: not page.locator("button:visible", has_text=BTN("REVERIFY")).count()
-                 and not page.locator("button:visible", has_text=BTN("VERIFY")).count(), 30, "Aadhaar to be verified")
-    except StuckError:
-        msg = (modal_text(page) or "")[:120]
-        for b in ("CLOSE", "OK"):
-            c = page.locator("button:visible", has_text=BTN(b))
-            if c.count():
-                c.first.click()
-                page.wait_for_timeout(500)
-                break
-        return f"REVERIFY + VERIFY did not verify{(': ' + msg) if msg else ''}"
-    page.wait_for_timeout(500)
-    return None
+    dlg = page.locator(".modal-content:visible").last
+    name_in = dlg.locator('input[name="beneficiaryName"]')
+    if not name_in.count():                       # the dialog's first box is Name (As per Aadhaar)
+        name_in = dlg.locator("input:not([type=hidden])")
+    base = name_in.first.input_value().strip() if name_in.count() else ""
+    verified = lambda: not page.locator("button:visible", has_text=BTN("REVERIFY")).count() \
+        and not page.locator("button:visible", has_text=BTN("VERIFY")).count()
+    tried, msg = [], ""
+    for cand in name_orders(base) or [""]:
+        if cand and cand != base:
+            try:
+                name_in.first.fill(cand)
+                name_in.first.dispatch_event("input"); name_in.first.dispatch_event("change")
+            except Exception:
+                break                             # name box not editable: no other order can be tried
+        tried.append(cand or "(as shown)")
+        if not ver.count():
+            break
+        ver.last.click()
+
+        def answer():
+            if verified():
+                return "ok"
+            t = modal_text(page) or ""
+            return "mismatch" if re.search(r"not\s+match|mismatch", t, re.I) else None
+        try:
+            got = wait_for(page, answer, 30, "Aadhaar to be verified")
+        except StuckError:
+            got = "timeout"
+        if got == "ok":
+            if cand and cand != base:
+                print(f"    Aadhaar reverified with the name as {cand!r}", flush=True)
+            page.wait_for_timeout(500)
+            return None
+        msg = re.sub(r"\s+", " ", modal_text(page) or "")[:120]
+        # a separate alert (OK) on top of the dialog: close it, keep the dialog for the next order
+        ok = page.locator(".modal-content:visible button", has_text=BTN("OK"))
+        if ok.count():
+            ok.last.click()
+            page.wait_for_timeout(400)
+        if got != "mismatch":
+            break                                 # not a name problem: other orders will not help
+    for b in ("CLOSE", "OK"):
+        c = page.locator("button:visible", has_text=BTN(b))
+        if c.count():
+            c.first.click()
+            page.wait_for_timeout(500)
+            break
+    return (f"REVERIFY + VERIFY did not verify (tried {', '.join(tried)})"
+            + (f": {msg}" if msg else ""))[:240]
 
 
 def fill_amount(page, locator, value):

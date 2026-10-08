@@ -136,6 +136,12 @@ def build(master, sol: str) -> dict:
     if not rows:
         raise ValueError(f"SOL {sol} is not in the master")
     work = [r for r in rows if r["Status"].strip().lower() in WORK_STATUSES]
+    if not work and worklist_path(sol).exists():
+        with open(worklist_path(sol), newline="", encoding="utf-8-sig") as fh:
+            had = sum(1 for _ in csv.DictReader(fh))
+        if had:                                      # e.g. a hand-work export uploaded as the master
+            raise ValueError(f"this file has no Pending / Draft rows for SOL {sol}: the work list ({had} rows) "
+                             f"was NOT replaced. Is it the bank's pendency master?")
     d = branch_dir(sol)
     (d / "reports").mkdir(parents=True, exist_ok=True)
     path = worklist_path(sol)

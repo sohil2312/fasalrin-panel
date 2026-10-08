@@ -730,7 +730,7 @@
             <span class="hint" style="--i:4"><svg class="ic"><use href="#i-up"/></svg><span>Upload back</span></span>
             <span class="hint warn" style="--i:5"><svg class="ic"><use href="#i-alert"/></svg><span>Account / Aadhaar as Text</span></span></div>
           <div class="row" style="margin-top:4px">
-            <input type="file" id="fixFiles" accept=".csv,text/csv" multiple>
+            <input type="file" id="fixFiles" accept=".csv,.xlsx,text/csv" multiple>
             <button id="fixBtn" disabled>Upload corrected CSVs</button>
           </div>
           <pre id="fixMsg" style="margin-top:8px"></pre>
@@ -866,7 +866,13 @@ $("fixFiles").addEventListener("change", () => { $("fixBtn").disabled = busy || 
 $("fixBtn").onclick = async () => {
   const out = [];
   for (const file of $("fixFiles").files) {
-    const r = await post("/api/corrections", {csv: $("csv").value, text: await file.text()});
+    let body = {csv: $("csv").value};
+    if (/\.xlsx$/i.test(file.name)) {                  // edited in Excel and saved as .xlsx
+      const buf = new Uint8Array(await file.arrayBuffer());
+      let bin = ""; for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode.apply(null, buf.subarray(i, i + 0x8000));
+      body.b64 = btoa(bin);
+    } else body.text = await file.text();
+    const r = await post("/api/corrections", body);
     if (r.error) { out.push(`${file.name}: ${r.error}`); continue; }
     out.push(`${file.name}: ${r.applied} rows will be entered again, ${r.not_marked} not marked Y`
              + (r.problem_count ? `, ${r.problem_count} refused:` : ""));

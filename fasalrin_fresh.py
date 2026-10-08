@@ -201,15 +201,7 @@ def select_label(scope, name: str, label: str, page, wait_options=8):
     raise RuntimeError(f"could not select {label!r} in {name}")
 
 
-def name_orders(name: str) -> list[str]:
-    """Name orders tried for Aadhaar VERIFY (user rule), surname = last word of the Excel name:
-    as in the Excel -> surname first middle -> surname first -> first surname. Duplicates dropped."""
-    w = name.split()
-    out = [name]
-    if len(w) >= 2:
-        first, sur, mid = w[0], w[-1], w[1:-1]
-        out += [" ".join([sur, first, *mid]), f"{sur} {first}", f"{first} {sur}"]
-    return list(dict.fromkeys(out))
+name_orders = f.name_orders          # same name orders as the IS regular reverify
 
 
 def relative_name(raw: str, aadhaar_name: str) -> str:

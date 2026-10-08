@@ -109,12 +109,45 @@ def save_master(name: str, b64: str, kind: str = "regular") -> tuple[str | None,
     if dest.exists():
         dest = d / f"{dest.stem}_{time.strftime('%Y%m%d_%H%M%S')}.xlsx"
     dest.write_bytes(data)
+    try:                                          # a hand-work export is not a master
+        import openpyxl
+        wb = openpyxl.load_workbook(dest, read_only=True)
+        head = [str(c or "").strip() for c in next(wb.worksheets[0].iter_rows(max_row=1, values_only=True), [])]
+        wb.close()
+        if "Fixed (Y)" in head or ("Reason" in head and "What to do" in head):
+            dest.unlink(missing_ok=True)
+            return ("this is a hand-work file (Reason / Fixed (Y)), not a master: upload it under "
+                    "'Upload corrected CSVs' in CSV totals"), None
+    except Exception:
+        pass
     try:                                          # validates the columns for that master type
         SOLS_OF.get(kind, branches.sols)(dest)
     except Exception as e:
         dest.unlink(missing_ok=True)
         return str(e)[:200], None
     return None, dest.name
+
+
+def xlsx_to_csv_text(b64: str) -> str:
+    """Edited hand-work .xlsx -> CSV text (dates dd-mm-yyyy, whole numbers without .0 or E+)."""
+    import base64
+    import io
+    from datetime import date as _d, datetime as _dt
+    import openpyxl
+    raw = base64.b64decode(b64, validate=True)
+    if len(raw) > MAX_UPLOAD or not raw.startswith(b"PK"):
+        raise ValueError("not an .xlsx file (or too large)")
+    wb = openpyxl.load_workbook(io.BytesIO(raw), read_only=True, data_only=True)
+    out = io.StringIO()
+    w = csv.writer(out)
+    for r in wb.worksheets[0].iter_rows(values_only=True):
+        if not any(c not in (None, "") for c in r):
+            continue
+        w.writerow([v.strftime("%d-%m-%Y") if isinstance(v, (_dt, _d)) else
+                    str(int(v)) if isinstance(v, float) and v.is_integer() else
+                    "" if v is None else str(v).strip() for v in r])
+    wb.close()
+    return out.getvalue()
 
 
 def csv_to_xlsx(name: str, b64: str) -> tuple[str, str]:
@@ -501,7 +534,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(400, {"error": "stop the running job first"})
             try:
                 with lock:
-                    res = branches.apply_corrections(ROOT / name, body.get("text", ""))
+                    text = body.get("text", "")
+                    if body.get("b64"):                 # an edited .xlsx: read it as the same table (all text)
+                        text = xlsx_to_csv_text(body["b64"])
+                    res = branches.apply_corrections(ROOT / name, text)
             except (ValueError, KeyError, csv.Error) as e:
                 return self._send(400, {"error": str(e)[:200]})
             return self._send(200, {"ok": True, **res})
