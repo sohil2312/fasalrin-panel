@@ -125,11 +125,15 @@ def user_category(page) -> str:
 def _select(page, name, label):
     sel = page.locator(f'select[name="{name}"]').first
     sel.wait_for()
+    picked = lambda: sel.evaluate("s => (s.options[s.selectedIndex]||{}).text.trim()") == label
+    if picked():
+        return
     for _ in range(5):
         sel.select_option(label=label)
-        page.wait_for_timeout(300)
-        if sel.evaluate("s => (s.options[s.selectedIndex]||{}).text.trim()") == label:
-            return
+        for _ in range(10):                          # <= 0.5 s, usually at once
+            if picked():
+                return
+            page.wait_for_timeout(50)
     raise StuckError(f"could not select {label!r} in {name}")
 
 
@@ -148,10 +152,28 @@ def list_rows(page) -> list[dict]:
     }""")
 
 
-def open_list(page):
-    """Dashboard -> View Details -> list page -> FY / SUBMITTED / Branch -> PROCEED."""
+def filters_set(page) -> bool:
+    try:
+        return page.evaluate("""(fy) => {
+            const t = n => { const s = document.querySelector(`select[name="${n}"]`);
+                             return s ? ((s.options[s.selectedIndex] || {}).text || '').trim() : null; };
+            return t('financialYear') === fy && t('applicationStatus') === 'SUBMITTED'
+                   && [null, 'Branch'].includes(t('branchOrPacs')); }""", f.FIN_YEAR)
+    except Exception:
+        return False
+
+
+def open_list(page, refresh_only=False):
+    """Dashboard -> View Details -> list page -> FY / SUBMITTED / Branch -> PROCEED.
+    refresh_only: already on the list with those filters -> just PROCEED again (no dashboard round trip)."""
+    if refresh_only and "/loan-application-list" in page.url and filters_set(page):
+        page.locator("button:visible", has_text=BTN("PROCEED")).first.click()
+        try:
+            wait_for(page, lambda: list_rows(page), 10, "application table")
+        except StuckError:
+            pass
+        return
     f.click_side_nav(page, "/dashboard")
-    page.wait_for_timeout(1000)
     if "/loan-application-list" not in page.url:
         btn = page.locator("button:visible", has_text=re.compile(r"View Details", re.I))
         wait_for(page, lambda: btn.count(), f.STUCK_TIMEOUT_S, "dashboard View Details")
@@ -162,7 +184,6 @@ def open_list(page):
     if page.locator('select[name="branchOrPacs"]').count():
         _select(page, "branchOrPacs", "Branch")
     page.locator("button:visible", has_text=BTN("PROCEED")).first.click()
-    page.wait_for_timeout(1500)
     # table appears, or the page settles with none (nothing pending)
     try:
         wait_for(page, lambda: list_rows(page), 15, "application table")
@@ -175,10 +196,14 @@ def approve_one(page, row) -> str:
     app, acct = row["app"], row["acct"]
     tr = page.locator("table tbody tr", has_text=app).first
     tr.locator("button", has_text=BTN("REVIEW")).first.click()
+    body_now = lambda: re.sub(r"\s+", " ", page.evaluate("() => document.body.innerText"))
     wait_for(page, lambda: "/loan-application-preview" in page.url and
              page.locator("button:visible", has_text=BTN("APPROVE")).count(), f.STUCK_TIMEOUT_S, "preview page")
-    page.wait_for_timeout(500)
-    body = re.sub(r"\s+", " ", page.evaluate("() => document.body.innerText"))
+    try:                                             # the account shows a moment after APPROVE: wait just for it
+        wait_for(page, lambda: not acct or acct in body_now(), 5, "account on the preview")
+    except StuckError:
+        pass
+    body = body_now()
     if acct and acct not in body:                    # make sure REVIEW opened the row we meant
         shot(page, f"verify_mismatch_{app}")
         raise RuntimeError(f"preview does not show account {acct}")
@@ -198,7 +223,10 @@ def approve_one(page, row) -> str:
     m = re.search(r"Loan application\s*(\d+)\s*approved successfully", txt, re.I)
     got = m.group(1) if m else ""
     page.locator(".modal-content:visible button", has_text=BTN("OK")).first.click()
-    page.wait_for_timeout(800)
+    try:
+        wait_for(page, lambda: not modal_text(page) and "/loan-application-preview" not in page.url, 5, "back to the list")
+    except StuckError:
+        pass
     if got and got != app:
         raise RuntimeError(f"portal approved {got}, expected {app}")
     return got or app
@@ -230,7 +258,7 @@ def main(limit: int, assume_yes: bool):
         print(f"[approvals] {files[-1].name}: {seen} approvals made outside this script recorded")
 
     with sync_playwright() as p:
-        ctx = p.chromium.launch_persistent_context(PROFILE_DIR, headless=f.HEADLESS, slow_mo=f.SLOWMO_MS,
+        ctx = p.chromium.launch_persistent_context(PROFILE_DIR, headless=f.HEADLESS, slow_mo=0,
                                                    viewport=None, args=["--start-maximized"])
         ctx.set_default_timeout(f.STUCK_TIMEOUT_S * 1000)
         page = ctx.pages[0] if ctx.pages else ctx.new_page()
@@ -295,7 +323,7 @@ def main(limit: int, assume_yes: bool):
             rows =[r for r in list_rows(page) if r["status"].lower() == "submitted"
                     and fails.get(r["app"], 0) < MAX_ROW_FAILS]
             if not rows:
-                open_list(page)                          # refresh once; maybe more pages / still loading
+                open_list(page, refresh_only=True)       # refresh once; maybe more pages / still loading
                 rows = [r for r in list_rows(page) if r["status"].lower() == "submitted"
                         and fails.get(r["app"], 0) < MAX_ROW_FAILS]
                 if not rows:
@@ -310,7 +338,7 @@ def main(limit: int, assume_yes: bool):
                       f"{'' if row['acct'] in sheet.by_acct else '  (account not in CSV)'}"
                       f"   | approved {approved}  errors {errors}", flush=True)
                 if "/loan-application-list" not in page.url or not list_rows(page):
-                    open_list(page)
+                    open_list(page, refresh_only=True)
             except KeyboardInterrupt:
                 raise
             except Exception as e:
