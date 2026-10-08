@@ -168,8 +168,9 @@ def open_list(page, refresh_only=False):
     refresh_only: already on the list with those filters -> just PROCEED again (no dashboard round trip)."""
     if refresh_only and "/loan-application-list" in page.url and filters_set(page):
         page.locator("button:visible", has_text=BTN("PROCEED")).first.click()
-        try:
-            wait_for(page, lambda: list_rows(page), 10, "application table")
+        try:                                         # wait for a Submitted row, not just any (old) table
+            wait_for(page, lambda: any(r["status"].lower() == "submitted" for r in list_rows(page)), 10,
+                     "submitted applications")
         except StuckError:
             pass
         return
@@ -323,7 +324,11 @@ def main(limit: int, assume_yes: bool):
             rows =[r for r in list_rows(page) if r["status"].lower() == "submitted"
                     and fails.get(r["app"], 0) < MAX_ROW_FAILS]
             if not rows:
-                open_list(page, refresh_only=True)       # refresh once; maybe more pages / still loading
+                open_list(page, refresh_only=True)       # quick refresh; maybe more pages / still loading
+                rows = [r for r in list_rows(page) if r["status"].lower() == "submitted"
+                        and fails.get(r["app"], 0) < MAX_ROW_FAILS]
+            if not rows:                                 # before saying "done": one full reload from the dashboard
+                open_list(page)
                 rows = [r for r in list_rows(page) if r["status"].lower() == "submitted"
                         and fails.get(r["app"], 0) < MAX_ROW_FAILS]
                 if not rows:

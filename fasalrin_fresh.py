@@ -438,19 +438,29 @@ def process_row(page, d: dict, stage: dict, mark_submitting):
     if known:
         sel = page.locator('.modal-content:visible select[name="accountNumbers"]')
         offered = sel.first.evaluate("s => [...s.options].map(o => o.value.trim())") if sel.count() else []
-        new_btn = page.locator(".modal-content:visible button", has_text=re.compile(r"^\s*(?:ADD\s+)?NEW\b", re.I))
-        if acct in offered or not new_btn.count():
-            page.locator('.modal-content:visible button', has_text=BTN("(?:BACK TO DASHBOARD|OK|CLOSE)")).first.click()
+        ok_btn = page.locator(".modal-content:visible button", has_text=BTN("OK"))
+        if not ok_btn.count():
+            page.locator('.modal-content:visible button', has_text=BTN("(?:BACK TO DASHBOARD|CLOSE)")).first.click()
             to_dashboard(page)
-            why = ("this account is already on the portal for this Aadhaar: use IS regular entry" if acct in offered
-                   else "portal knows this Aadhaar, account not in its list and no NEW button: check by hand")
-            return "EXISTS_ON_PORTAL", "", why
-        print(f"\n    Aadhaar known, account {acct} not in its list -> NEW", flush=True)
-        new_btn.first.click()
+            return "EXISTS_ON_PORTAL", "", "Beneficiary details exist but the popup has no OK: check by hand"
+        if acct in offered:                       # pick this account when the portal lists it
+            sel.first.select_option(acct)
+            sel.first.dispatch_event("change")
+            page.wait_for_timeout(200)
+        # "Beneficiary details exist in the system" -> OK, then the application is entered the fresh way
+        print(f"\n    Beneficiary details exist -> OK (account {acct} "
+              f"{'in' if acct in offered else 'not in'} its list)", flush=True)
+        ok_btn.first.click()
         page.wait_for_timeout(500)
-        ok = page.locator('.modal-content:visible button', has_text=BTN("(?:OK|YES|CONFIRM|PROCEED)"))
-        if ok.count() and f.active_pane(page) != "formTabs-tabpane-1":
-            ok.first.click()                          # a confirmation after NEW, if the portal asks one
+        more = page.locator('.modal-content:visible button', has_text=BTN("(?:OK|YES|CONFIRM|PROCEED)"))
+        if more.count() and f.active_pane(page) != "formTabs-tabpane-1":
+            more.first.click()                        # a confirmation, if the portal asks one
+        try:
+            wait_for(page, lambda: f.active_pane(page) == "formTabs-tabpane-1", 10, "application form after OK")
+        except StuckError:                            # OK did not open the form (e.g. an account must be picked)
+            f.shot(page, f"fresh_exists_{acct}")
+            to_dashboard(page)
+            return "EXISTS_ON_PORTAL", "", "Beneficiary details exist: OK did not open the form (account not in its list?)"
     elif res != "not_in_system":
         raise RuntimeError(f"unexpected FETCH response: {res}")
     else:
@@ -472,7 +482,7 @@ def process_row(page, d: dict, stage: dict, mark_submitting):
             why = f.reverify_aadhaar(page)
             if why:
                 to_dashboard(page)
-                return "VERIFY_FAILED", "", f"known farmer, NEW application: {why}"[:200]
+                return "VERIFY_FAILED", "", f"known farmer (Beneficiary details exist): {why}"[:200]
             verified = True
         elif not p1.locator("button:visible", has_text=BTN("VERIFY")).count():
             verified = True                           # already verified on the portal
