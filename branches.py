@@ -32,7 +32,7 @@ import fasalrin_regular as f
 ROOT = Path(__file__).resolve().parent
 BRANCHES = ROOT / "branches"
 MASTER_COLS = {"sol": "Sol ID", "branch": "Branch Name", "status": "Status"}
-WORK_STATUSES = {"pending"}                     # master Status values that go into a work list
+WORK_STATUSES = {"pending", "draft"}            # master Status values that go into a work list (drafts: finished by the entry run)
 MIS_STATUS = "MIS Status"
 OURS = [f.COL_STATUS, f.COL_DL, f.COL_APPNO, f.COL_DETAIL]
 
@@ -105,9 +105,13 @@ def sols(master) -> list[dict]:
     """[{sol, branch, rows, pending, built}] for every SOL in the master."""
     out = {}
     for r in read_master(master):
-        s = out.setdefault(r["Sol ID"], {"sol": r["Sol ID"], "branch": r["Branch Name"], "rows": 0, "pending": 0})
+        s = out.setdefault(r["Sol ID"], {"sol": r["Sol ID"], "branch": r["Branch Name"], "rows": 0, "pending": 0,
+                                         "only_pending": 0, "draft": 0})
+        st = r["Status"].strip().lower()
         s["rows"] += 1
-        s["pending"] += r["Status"].strip().lower() in WORK_STATUSES
+        s["pending"] += st in WORK_STATUSES
+        s["only_pending"] += st == "pending"
+        s["draft"] += st == "draft"
     for s in out.values():
         s["built"] = worklist_path(s["sol"]).exists()
     return sorted(out.values(), key=lambda s: s["sol"])
@@ -185,6 +189,8 @@ def build(master, sol: str) -> dict:
     approved = sum(1 for a, e in approvals(sol).items() if a in accts and e == "APPROVED")
     return {"sol": sol, "branch": rows[0]["Branch Name"], "csv": str(path.relative_to(ROOT)),
             "master_rows": len(rows), "master_pending": len(work), "other_branch": other,
+            "mis_pending": sum(1 for r in work if r["Status"].strip().lower() == "pending"),
+            "mis_draft": sum(1 for r in work if r["Status"].strip().lower() == "draft"),
             "from_progress": from_progress, "on_portal": on_portal,
             "finished": b["finished"], "approved": approved, "hand": b["hand"], "check": b["check"],
             "to_do": b["todo"],
@@ -833,7 +839,8 @@ def apply_pri_corrections(csv_path, rows_in) -> dict:
 
 
 # ---- IS regular: reset hand-work rows so the next entry run tries them again -----------------------
-NOT_RESETTABLE = {"CHECK_PORTAL", "OTHER_BRANCH", "ERROR"}   # could double-submit / never ours / retried anyway
+NOT_RESETTABLE = {"OTHER_BRANCH", "ERROR"}   # never ours / retried anyway (CHECK_PORTAL: the run re-opens the draft,
+                                              # and an already submitted one is caught on the preview)   # could double-submit / never ours / retried anyway
 
 
 def reset_hand_work(csv_path, reasons: list[str]) -> dict:

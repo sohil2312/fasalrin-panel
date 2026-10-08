@@ -43,6 +43,7 @@ FIN_YEAR = f.FIN_YEAR
 SUBDISTRICT = "Kadana"
 DEFAULT_MOBILE = "9876543210"        # user rule: MO NO blank / not 10 digits
 DEFAULT_PIN = "389240"
+MIN_AGE, MAX_AGE = 18, 100           # a DOB outside this age is a data error (e.g. 01-01-0975): skipped
 BRANCH_PIN = {"LUNAWADA": "389230"}  # user rule: every entry of this branch uses this pincode
 CASTE, FARMER_CAT, FARMER_TYPE, APP_TYPE = "ST", "OWNER", "SMALL", "Normal"
 CROP = "Castor (Rehri, Rendi, Arandi) - RF"
@@ -415,6 +416,15 @@ def process_row(page, d: dict, stage: dict, mark_submitting):
         or (re.findall(r"\b(\d{6})\b", addr) or [d.get("_pin") or DEFAULT_PIN])[-1]
 
     stage["s"] = "start"
+    if d.get("_draft"):
+        # a draft this script left on the portal (reset to retry): finish it with the IS regular flow, which opens
+        # the farmer's application, walks the saved tabs and submits; an already submitted one is caught on the preview
+        st, _dl, app, det = f.process_row(page, acct, aadhaar, disb, dp, stage, mark_submitting)
+        if st in ("COMPLETED", "ALREADY_ON_PORTAL"):
+            return st, app, f"draft finished · {det}"
+        if st != "NOT_IN_SYSTEM":                    # NOT_IN_SYSTEM = the draft is gone: enter it fresh below
+            return f"{HOLD}:DRAFT", "", f"draft could not be finished automatically ({st}: {det}) - finish it by hand"[:200]
+        stage["s"] = "start"
     f.open_fetch_popup(page)
     res = f.fetch_record(page, aadhaar)
     stage["s"] = "fetched"
@@ -686,6 +696,11 @@ def precheck(d: dict) -> tuple[str, str] | None:
             f.parse_dmy(d.get(col, ""))
         except Exception:
             return "BAD_DATA", f"{col} {d.get(col)!r} is not a date"
+    dob = f.parse_dmy(d["DOB"])
+    today = date.today()
+    age = today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
+    if not MIN_AGE <= age <= MAX_AGE:                # e.g. 01-01-0975 or a date in the future
+        return "BAD_DATA", f"DOB {d['DOB']!r} looks wrong (age {age}): fix it in the Excel"
     if f.money_to_float(d.get("DP") or "0") <= 0:
         return "BAD_DATA", "DP is 0"
     if not d.get("NAME AS PER ADHAR", "").strip() or not d.get("VILLAGE", "").strip():
@@ -718,6 +733,8 @@ def run(csv_path: Path):
             if r["Account No."] == acct:
                 r.update(rec)
     out_header = header
+    for r in rows:                      # a draft reset to retry: continued on the portal, not started again
+        r["_draft"] = not r.get("Status") and "was CHECK_PORTAL" in (r.get("Detail") or "")
     for r in rows:                      # Excel problems are re-checked every run: a fixed row goes back to the queue
         if r.get("Status") in ("NO_LAND", "BAD_DATA", "SCHEME_UNKNOWN") and not precheck(r):
             r["Status"], r["Detail"] = "", "data fixed in the Excel"

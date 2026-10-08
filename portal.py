@@ -350,7 +350,9 @@ def csv_summary(name: str) -> dict:
             elif v == "APPROVED":
                 claims["approved"] += 1
     summ = branches.hand_work_dir(ROOT / name) / f"{Path(name).stem}_summary.csv"
+    mis = collections.Counter((r.get(branches.MIS_STATUS) or "").strip().lower() for r in rows)
     return {"rows": len(rows), "status": dict(st.most_common()), "approval": dict(ap),
+            "mis": {"pending": mis.get("pending", 0), "draft": mis.get("draft", 0)},
             "reasons": branches.hand_work_counts(ROOT / name), "claims": claims,
             "export": time.strftime("%d-%m %H:%M", time.localtime(summ.stat().st_mtime)) if summ.exists() else None,
             "buckets": {"finished": b["finished"], "approved": approved, "submitted": b["finished"] - approved,

@@ -437,6 +437,9 @@
   .totcol > h2 { margin: 18px 0 10px; font-size: .9rem; font-weight: 700; text-transform: none; letter-spacing: 0; }
   .totcol > h2:first-child { margin-top: 0; }
   .totcol > h2::before { width: 10px; height: 10px; border-radius: 50%; background: var(--red); border-width: 2px; }
+  .srcline { margin: 0 0 12px; font-size: 1rem; font-weight: 600; }
+  .srcline b { font-size: 1.35rem; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+  .srcline .muted { font-weight: 500; }
   .totcol .stats { grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); }
   @media (max-width: 900px) { .totcols { grid-template-columns: minmax(0, 1fr); } }
   .grid > section > .row:last-child, #jobLive > .row:last-child { margin-top: auto; padding-top: 16px; }
@@ -698,11 +701,12 @@
       <h2>CSV totals <span class="muted" id="sumName" style="text-transform:none"></span></h2>
       <div class="totcols">
         <div class="totcol">
+          <p class="srcline" id="sumSrc"></p>
           <div class="stats" id="sumMain"></div>
-          <div class="hints"><span class="hint" style="--i:0"><svg class="ic"><use href="#i-check"/></svg><span><b>Finished</b> = on portal</span></span>
-            <span class="hint" style="--i:1"><svg class="ic"><use href="#i-hand"/></svg><span><b>Hand work</b> = skipped</span></span></div>
-          <h2>By status</h2>
-          <div class="stats" id="sumStats"></div>
+          <div class="hints"><span class="hint" style="--i:0"><svg class="ic"><use href="#i-check"/></svg><span><b>Done</b> = on portal</span></span>
+            <span class="hint" style="--i:1"><svg class="ic"><use href="#i-hand"/></svg><span><b>Hand work</b> = skipped, see reasons</span></span>
+            <span class="hint" style="--i:2"><svg class="ic"><use href="#i-retry"/></svg><span><b>Draft</b> = saved, not submitted</span></span></div>
+          <div class="stats" id="sumStats" style="display:none"></div>
         </div>
         <div class="totcol">
           <h2>Hand work by reason</h2>
@@ -953,7 +957,8 @@ function showSol() {
   $("buildOne").disabled = busy || !s;
   $("buildOne").textContent = s && s.built ? "Rebuild" : "Build";
   if (!s) { $("solInfo").innerHTML = ""; return; }
-  stats($("solInfo"), [["rows in master", s.rows], [pendLabel, s.pending], ["work list", s.built ? "built" : "—"]]);
+  stats($("solInfo"), [["rows in master", s.rows], [pendLabel, s.pending]]
+    .concat(s.draft ? [["· pending", s.only_pending], ["· draft", s.draft]] : []).concat([["work list", s.built ? "built" : "—"]]));
 }
 $("solPick").addEventListener("change", showSol);
 $("upToggle").onclick = e => { e.preventDefault(); const r = $("upRow"); r.style.display = r.style.display === "none" ? "" : "none"; };
@@ -988,7 +993,7 @@ async function buildSol(sol) {
     loadMasters(); poll(); return;
   }
   lastScheme = null;
-  $("buildMsg").innerHTML = `<b>${esc(r.sol)} ${esc(r.branch)}</b>: ${r.master_pending} Pending in master
+  $("buildMsg").innerHTML = `<b>${esc(r.sol)} ${esc(r.branch)}</b>: ${r.master_pending} in Excel (${r.mis_pending} pending + ${r.mis_draft} draft)
     → <b>${r.to_do} to do</b>, <b>${r.finished} finished</b> (${r.approved} approved, ${r.finished - r.approved} submitted for approval;
     ${r.on_portal} newly found on portal), ${r.hand} need hand work` + (r.check ? `, ${r.check} check on portal` : "")
     + (r.other_branch ? `, ${r.other_branch} skipped (other branch account)` : "") + `. Reports: ${esc(r.reports_from)}.`;
@@ -1105,29 +1110,31 @@ function render(s) {
   // csv totals
   $("sumName").textContent = s.csv ? "· " + s.csv : "";
   const sm = s.summary || {}, b = sm.buckets || {};
-  if (sm.scheme === "fresh") {
+  // one line where the list comes from, then four numbers: done / to do / hand work / drafts
+  const src = $("sumSrc");
+  if (!s.csv) src.innerHTML = "";
+  else if (sm.scheme === "fresh") {
     const fr = sm.fresh || {};
-    stats($("sumMain"), [["new farmers", sm.rows ?? 0], ["entered", fr.entered ?? 0], ["needs hand work", fr.hand ?? 0],
-                         ["check on portal", fr.check ?? 0], ["errors (retried)", fr.errors ?? 0], ["to do", fr.todo ?? 0],
-                         ["CC004 crop", fr.cc004 ?? 0], ["CC043 dairy", fr.cc043 ?? 0]]);
-  } else
-  if (["additional", "pri", "prireg"].includes(sm.scheme)) {
+    src.innerHTML = `<b>${sm.rows ?? 0}</b> in file <span class="muted">= ${fr.cc004 ?? 0} crop (CC004) + ${fr.cc043 ?? 0} dairy (CC043)</span>`;
+    stats($("sumMain"), [["done", fr.entered ?? 0], ["to do", (fr.todo ?? 0) + (fr.errors ?? 0)],
+                         ["hand work", fr.hand ?? 0], ["drafts to check", fr.check ?? 0]]);
+  } else if (["additional", "pri", "prireg"].includes(sm.scheme)) {
     const a = sm.additional || {};
-    stats($("sumMain"), [["rows", sm.rows ?? 0], ["claimed by us", a.claimed ?? 0], ["· approved", a.approved ?? 0],
-                         ["already on portal", a.on_portal ?? 0],
-                         ["not found / closed", a.not_found_closed ?? 0], ["mismatch", a.mismatch ?? 0],
-                         ["errors", a.errors ?? 0], ["check on portal", a.check ?? 0], ["to do", a.todo ?? 0]]);
-  } else
-  stats($("sumMain"), [["rows", sm.rows ?? 0], ["finished", b.finished ?? 0], ["· approved", b.approved ?? 0],
-                       ["· submitted for approval", b.submitted ?? 0], ["needs hand work", b.hand ?? 0],
-                       ["check on portal", b.check ?? 0], ["to do", b.todo ?? 0],
-                       ["IS claims filed", (sm.claims || {}).filed ?? 0], ["IS claims approved", (sm.claims || {}).approved ?? 0],
-                       ["claims hand work", (sm.claims || {}).hand ?? 0]]
-                       .concat((sm.claims || {}).check ? [["claims check on portal", sm.claims.check]] : []));
+    src.innerHTML = `<b>${sm.rows ?? 0}</b> in work list`;
+    stats($("sumMain"), [["claimed", (a.claimed ?? 0) + (a.on_portal ?? 0)], ["· approved", a.approved ?? 0],
+                         ["to do", a.todo ?? 0], ["hand work", (a.not_found_closed ?? 0) + (a.mismatch ?? 0) + (a.errors ?? 0)],
+                         ["to check", a.check ?? 0]]);
+  } else {
+    const mis = sm.mis || {};
+    src.innerHTML = `<b>${sm.rows ?? 0}</b> in Excel` + ((mis.pending || mis.draft)
+      ? ` <span class="muted">= ${mis.pending ?? 0} pending + ${mis.draft ?? 0} draft</span>` : "");
+    stats($("sumMain"), [["done", b.finished ?? 0], ["· approved", b.approved ?? 0], ["to do", b.todo ?? 0],
+                         ["hand work", b.hand ?? 0], ["drafts to check", b.check ?? 0]]);
+  }
   stats($("sumStats"), Object.entries(sm.status || {}).map(([k, v]) => [label(k), v]));
   const rs = sm.reasons || [];
   const canReset = !!s.csv && ["regular", "fresh"].includes(listScheme(s.csv));
-  const NO_RESET = ["CHECK_PORTAL", "OTHER_BRANCH", "ERROR"];
+  const NO_RESET = ["OTHER_BRANCH", "ERROR"];
   const ticked = new Set([...document.querySelectorAll('input[name="resetReason"]:checked')].map(x => x.value));
   $("resetHead").textContent = canReset ? "Retry" : "";
   $("reasons").innerHTML = rs.length ? rs.map(r => `<tr><td>${canReset && !NO_RESET.includes(r.reason)
