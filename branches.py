@@ -532,7 +532,7 @@ REASONS = [   # (status or prefix, sheet name, what to do)
     ("AADHAAR_REVERIFY",     "Aadhaar reverify",     "Portal asks to REVERIFY Aadhaar on the applicant tab"),
     ("NO_AADHAAR",           "No Aadhaar",           "Aadhaar missing / not 12 digits in the master"),
     ("DP_ZERO",              "DP zero",              "DP is 0 or blank in the master"),
-    ("NO_ACTIVITY",          "No activity",          "Activity tab empty: add land / crop / survey no / khata"),
+    ("NO_ACTIVITY",          "No activity",          "Activity not added: village not found from ADDRESS, or SURVEY / KHATA / LAND missing (see Detail)"),
     ("APPLICANT_INCOMPLETE", "Applicant incomplete", "Applicant tab missing state / district / village etc."),
     ("ACCT_NOT_IN_DROPDOWN", "Account not offered",  "Portal does not offer this account for the Aadhaar"),
     ("NO_ACCT_DROPDOWN",     "No account list",      "Farmer exists but the popup shows no account list"),

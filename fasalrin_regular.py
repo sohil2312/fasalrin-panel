@@ -719,8 +719,82 @@ def ensure_primary_activity(page, want: str | None = None):
 # ----------------------------------------------------------------------------
 # process one CSV row -> (status, drawing_limit_entered, app_no, detail)
 # ----------------------------------------------------------------------------
+LAND_COLS = {"address": r"ADDRESS", "survey": r"SURVEY\s*(NO\.?|NUM(BER)?)", "khata": r"KHATA\s*(NO\.?|NUM(BER)?)",
+             "area": r"(LAND\s*AREA|LAND|AREA)\s*(\(.*\))?", "branch": r"Branch Name"}
+
+
+def land_of(r: list, idx: dict) -> dict:
+    """The master's land columns for a row (ADDRESS, SURVEY NO / NUM, KHATA NO / NUM, LAND / AREA): '' if absent."""
+    return {k: next((r[i].strip() for c, i in idx.items() if re.fullmatch(p, c.strip(), re.I)), "")
+            for k, p in LAND_COLS.items()}
+
+
+def add_activity(page, act, scheme: str, activity: str, land: dict, dp: int, opened: bool = False):
+    """Activity tab empty (new farmer): open the scheme's activity and fill it like IS fresh -
+    CC004 Agri Crops: Castor (RF), survey no, khata no, land area, IRRIGATED, KHARIF;
+    CC043 Animal Husbandry: DAIRY, COW, 4 units; land location = the branch's block + the village from ADDRESS.
+    Returns None when filled, else the reason it stays hand work."""
+    import fasalrin_fresh as fr
+    land = land or {}
+    if not activity:
+        return f"scheme {scheme!r}: no activity rule (only CC004 / CC043)"
+    if not land.get("address") or land["address"].startswith("#"):
+        return "activity tab empty and no ADDRESS in the master: add activity by hand"
+    if scheme == "CC004":
+        if not land.get("survey") or not land.get("khata"):
+            return "activity tab empty: crop loan needs SURVEY NO and KHATA NO in the master"
+        try:
+            if float(land.get("area") or 0) <= 0:
+                raise ValueError
+        except ValueError:
+            return f"activity tab empty: crop loan needs a LAND (area) column in the master (got {land.get('area')!r})"
+    cands = fr.address_candidates(land["address"], land.get("branch", ""))
+    if not cands:
+        return f"activity tab empty: no village in ADDRESS {land['address'][:60]!r}"
+    if not opened:
+        act.locator("button", has_text=BTN(re.escape(activity))).first.click()
+    ls_in = act.locator('input[name="loanSanctionedAmount"]').first
+    try:
+        ls_in.wait_for(timeout=8000)
+    except PWTimeout:
+        return f"{activity} form did not open on the activity tab"
+    fill_amount(page, ls_in, dp)
+    if scheme == "CC004":
+        fr.select_label(act, "cropCode", fr.CROP, page)
+        fr.fill_text(page, act.locator('input[name="surveyNumber"]').first, land["survey"])
+        fr.fill_text(page, act.locator('input[name="khataNumber"]').first, land["khata"])
+        fr.fill_text(page, act.locator('input[name="landArea"]').first, land["area"])
+        fr.select_label(act, "landType", fr.LAND_TYPE, page)
+        fr.select_label(act, "seasonCode", fr.SEASON, page)
+        want = {"cropCode": fr.CROP, "surveyNumber": land["survey"], "khataNumber": land["khata"],
+                "landArea": land["area"], "landType": fr.LAND_TYPE, "seasonCode": fr.SEASON}
+        fix = {"cropCode": lambda: fr.select_label(act, "cropCode", fr.CROP, page),
+               "landType": lambda: fr.select_label(act, "landType", fr.LAND_TYPE, page),
+               "seasonCode": lambda: fr.select_label(act, "seasonCode", fr.SEASON, page),
+               **{k: (lambda k=k: fr.fill_text(page, act.locator(f'input[name="{k}"]').first, want[k]))
+                  for k in ("surveyNumber", "khataNumber", "landArea")}}
+    else:                                          # KCC AH: default DAIRY, COW, 4 (user rule)
+        fr.select_label(act, "stockCount", fr.AH_CATEGORY, page)
+        fr.select_label(act, "liveStockCode", fr.AH_ANIMAL, page)
+        fr.fill_text(page, act.locator('input[name="unitCount"]').first, fr.AH_UNITS)
+        want = {"stockCount": fr.AH_CATEGORY, "liveStockCode": fr.AH_ANIMAL, "unitCount": fr.AH_UNITS}
+        fix = {"stockCount": lambda: fr.select_label(act, "stockCount", fr.AH_CATEGORY, page),
+               "liveStockCode": lambda: fr.select_label(act, "liveStockCode", fr.AH_ANIMAL, page),
+               "unitCount": lambda: fr.fill_text(page, act.locator('input[name="unitCount"]').first, fr.AH_UNITS)}
+    try:
+        v = fr.find_location(page, land["address"], land.get("branch", ""), cands)
+    except fr.VillageError:
+        return f"village not found in the portal list from ADDRESS {land['address'][:70]!r}: add activity by hand"
+    print(f"\n    activity added: {activity}, village {v}", flush=True)
+    fr.check_form(page, act, want, "activity tab", fix)
+    loc_txt = fr.form_values(act, ["landLocation"]).get("landLocation") or ""
+    if loc_txt and fr.norm(v) not in fr.norm(loc_txt):
+        raise RuntimeError(f"land location shows {loc_txt!r}, want village {v!r}")
+    return None
+
+
 def process_row(page, acct: str, aadhaar: str, disb: date, dp: int, stage: dict, mark_submitting=None,
-                scheme: str = ""):
+                scheme: str = "", land: dict | None = None):
     activity = SCHEME_ACTIVITY.get((scheme or "").strip().upper())
     stage["s"] = "start"
     open_fetch_popup(page)
@@ -839,13 +913,18 @@ def process_row(page, acct: str, aadhaar: str, disb: date, dp: int, stage: dict,
     ls_in = act.locator('input[name="loanSanctionedAmount"]').first
     try:
         ls_in.wait_for(timeout=4000)
+        opened = True
     except PWTimeout:
-        # new farmer: no activity added. Adding one needs land location / crop / survey no /
-        # khata / land area -> manual job. Leave the draft, skip the row with a remark.
-        shot(page, f"noactivity_{acct}")
-        click_side_nav(page, "/dashboard")
-        page.wait_for_timeout(800)
-        return "NO_ACTIVITY", "", "", "activity tab empty: add activity (land/crop/survey/khata) by hand"
+        opened = False
+    import fasalrin_fresh as fr
+    if not opened or not any(fr.form_values(act, ["landLocation", "surveyNumber", "unitCount", "landArea"]).values()):
+        # new farmer: no activity (or an empty one) -> add it from the master's ADDRESS / SURVEY NO / KHATA NO (+ LAND)
+        why = add_activity(page, act, (scheme or "").strip().upper(), activity, land, dp, opened)
+        if why:
+            shot(page, f"noactivity_{acct}")
+            click_side_nav(page, "/dashboard")
+            page.wait_for_timeout(800)
+            return "NO_ACTIVITY", "", "", why
     act_date = act.locator("input.rmdp-input").first
     act_date.wait_for()
     page.wait_for_timeout(500)
@@ -1162,7 +1241,8 @@ def main():
                 print(f"\r[{walked:>4}/{total}] {acct}  working...        ", end="", flush=True)
                 try:
                     status, dl, app_no, detail = process_row(page, acct, aadhaar, disb, dp, stage, mark_submitting,
-                                                             r[idx["Scheme Code"]] if "Scheme Code" in idx else "")
+                                                             r[idx["Scheme Code"]] if "Scheme Code" in idx else "",
+                                                             land_of(r, idx))
                     if status == "AADHAAR_REVERIFY" and acct in reverify_retry:
                         detail = f"{detail} {REVERIFY_RETRIED}"      # the one retry failed too: hand work for good
                     r[s_i], r[dl_i], r[no_i], r[de_i] = status, dl, app_no, detail

@@ -192,13 +192,85 @@ def village_candidates(want: str) -> list[str]:
     return res
 
 
-def match_village(want: str, options: list[str]) -> str | None:
+# words of a bank address that are never the village (post / taluka / district / state, relations, filler)
+ADDR_STOP = {"AT", "PO", "POST", "TA", "TAL", "TALUKA", "TQ", "DIST", "DISTT", "DI", "JI", "JILO", "JILLA", "MU", "VIA",
+             "NEAR", "SO", "WO", "DO", "NA", "GUJARAT", "PANCHMAHAL", "PANCHMAHALS", "PANCH", "MAHALS", "MAHISAGAR",
+             "DISTRICT", "FALIYU", "FALIYA", "FALIU", "FALIA", "VAS", "NAVI", "VASAHAT", "STATE", "INDIA"}
+ADDR_NOT_ALONE = {"NORTH", "SOUTH", "EAST", "WEST", "UTTAR", "DAKSHIN", "UTAR", "NANA", "NANI", "MOTA", "MOTI",
+                  "MUVADI", "JUNA", "NAVA", "NAVI", "MOTU", "NANU"}     # only part of a name ('MOTI RATH')
+ADDR_SKIP_AFTER = {"TA", "TAL", "TALUKA", "TQ", "DIST", "DISTT", "DI", "JI", "JILO", "JILLA", "SO", "WO", "DO"}
+
+
+def address_candidates(addr: str, branch: str = "") -> list[tuple[str, bool]]:
+    """Village names to try from a bank address, in order (user rule):
+    starts with AT PO -> the name after AT PO; starts with AT -> the name after AT, then the name after PO;
+    starts directly with a name -> that name, then the name after PO; then the rest of the whole address
+    (each comma part, then each word / word pair) until the portal list has one. In that last sweep the block
+    name (KADANA for Kadanagam) and cut-off pieces of GUJARAT / PANCHMAHALS / MAHISAGAR are left out."""
+    s = (addr or "").upper().strip()
+    if not s or s.startswith("#"):                     # #N/A, #NAME? from the Excel
+        return []
+    s = re.sub(r"\b([SWD])\s*/\s*O\b", r" \1O ", s)               # S/O -> SO (the name after it is a person)
+    toks = re.findall(r"[A-Z]+|,", re.sub(r"[^A-Z,]", " ", s))
+    if not toks or toks[0] == "NA":
+        return []
+    blk = norm(branch)
+    def junk(t):                                       # block name, or a piece of a long stop word ('GUJARA', 'AHALS')
+        return t in ADDR_NOT_ALONE or (len(t) >= 4 and blk and (blk.startswith(t) or t.startswith(blk))) or             any(len(w) >= 6 and w != t and (w.startswith(t) or w.endswith(t)) for w in ADDR_STOP)
+
+    def phrase(i):                                     # words from i up to the next stop word / comma
+        out = []
+        while i < len(toks) and toks[i] != "," and toks[i] not in ADDR_STOP:
+            out.append(toks[i]); i += 1
+        return " ".join(out)
+
+    def after(word_set):                               # the phrase after each PO / POST
+        return [phrase(i + 1) for i, t in enumerate(toks) if t in word_set]
+
+    first = []
+    if toks[:2] == ["AT", "PO"] or toks[:2] == ["AT", "POST"]:
+        first = [phrase(2)]
+    elif toks[0] in ("ATPO", "ATPOST"):
+        first = [phrase(1)]
+    elif toks[0] == "AT":
+        first = [phrase(1), *after({"PO", "POST"})]
+    elif toks[0].startswith("AT") and len(toks[0]) > 4:   # 'ATKALIYARI', 'ATNANI RATHA' (AT stuck to the name)
+        first = [" ".join([toks[0][2:], *phrase(1).split()]), toks[0][2:], phrase(0), *after({"PO", "POST"})]
+    else:
+        first = [phrase(0), *after({"PO", "POST"})]
+
+    res, seen = [], set()
+    def add(x, strict):
+        x = x.strip()
+        if x and len(x) >= 3 and x not in seen:
+            seen.add(x); res.append((x, strict))
+    for p in first:                                    # the AT / PO / leading name: as in the village column
+        for x, strict in village_candidates(p):
+            if not (strict and junk(x.replace(" ", ""))):
+                add(x, strict)
+    starts = [0] + [i + 1 for i, t in enumerate(toks) if t == ","]
+    for i in starts:                                   # each comma part (the bank's own 'VILLAGE,TALUKA,..' part too)
+        while i < len(toks) and toks[i] in ("AT", "PO", "POST"):
+            i += 1
+        ph = phrase(i)
+        if ph and not junk(ph.replace(" ", "")):
+            add(ph, True)
+    words = [(i, t) for i, t in enumerate(toks)
+             if t != "," and t not in ADDR_STOP and not junk(t) and not (i and toks[i - 1] in ADDR_SKIP_AFTER)]
+    for n, (i, t) in enumerate(words):                 # then every word and word pair, strict matching only
+        add(t, True)
+        if n + 1 < len(words) and words[n + 1][0] == i + 1:
+            add(f"{t} {words[n + 1][1]}", True)
+    return res
+
+
+def match_village(want: str, options: list[str], cands: list[tuple[str, bool]] | None = None) -> str | None:
     """Excel village -> one portal option: exact (letters only, UTTAR = North), then prefix, then same consonants,
     then same words, then consonant prefix, then one letter off. Candidates from village_candidates().
     Ambiguous or nothing -> None (hand work, no guess)."""
     opts = [o for o in options if o and o.strip().lower() != "select"]
     cons = lambda x: re.sub(r"[AEIOUY]", "", x)
-    for part, strict in village_candidates(want):       # the first name the portal has (uniquely)
+    for part, strict in (cands if cands is not None else village_candidates(want)):   # first unique hit
         w = norm(part)
         if not w:
             continue
@@ -406,14 +478,16 @@ def pick_block(page, scope, name: str, branch: str) -> str:
     return blk
 
 
-def find_location(page, village: str, branch: str):
-    """Activity tab: 'Find Location?' -> the branch's block + village -> PROCEED."""
+def find_location(page, village: str, branch: str, cands: list[tuple[str, bool]] | None = None) -> str:
+    """Activity tab: 'Find Location?' -> the branch's block + village -> PROCEED. Returns the village picked."""
     page.locator("a", has_text=re.compile(r"Find Location", re.I)).first.click()
     m = page.locator(".modal-content:visible")
     pick_block(page, m, "landSubDistrictID", branch)
     wait_for(page, lambda: len(options_of(m, "landVillageID")) > 1, 10, "land villages")
-    v = match_village(village, options_of(m, "landVillageID"))
+    v = match_village(village, options_of(m, "landVillageID"), cands)
     if not v:
+        m.locator("button", has_text=BTN("(?:CANCEL|CLOSE|BACK)")).first.click() if \
+            m.locator("button", has_text=BTN("(?:CANCEL|CLOSE|BACK)")).count() else page.keyboard.press("Escape")
         raise VillageError(village)
     open_ = lambda: page.locator('.modal-content:visible select[name="landVillageID"]').count()
     for attempt in range(3):            # PROCEED sometimes does nothing the first time: re-pick the village, press again
@@ -422,7 +496,7 @@ def find_location(page, village: str, branch: str):
         m.locator("button", has_text=BTN("PROCEED")).first.click()
         try:
             wait_for(page, lambda: not open_(), 6, "location popup to close")
-            return
+            return v
         except StuckError:
             continue
     raise StuckError("location popup did not close after PROCEED (3 tries)")
