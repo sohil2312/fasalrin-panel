@@ -162,21 +162,54 @@ def norm(s: str) -> str:
     return re.sub(r"[^A-Z]", "", s)
 
 
+def one_edit(a: str, b: str) -> bool:
+    """a and b differ by at most one letter (added, dropped or changed): ZALASAG ~ ZALASANG."""
+    if abs(len(a) - len(b)) > 1:
+        return False
+    if len(a) > len(b):
+        a, b = b, a
+    i = 0
+    while i < len(a) and a[i] == b[i]:
+        i += 1
+    return a[i:] == b[i + 1:] or (len(a) == len(b) and a[i + 1:] == b[i + 1:])
+
+
+def village_candidates(want: str) -> list[str]:
+    """Names to try, in order (user rule): each comma / slash part; within a part the whole text, then the
+    first word, first + second, third, third + fourth ('ZALASAG BACHKARIYA ZALASAG')."""
+    parts = [x.strip() for x in re.split(r"[/,;]", want or "") if x.strip()] or [want or ""]
+    out = []                                          # (name, from words of a longer text: strict matching only)
+    for part in parts:
+        w = part.split()
+        out += [(part, False)] + [(x, True) for x in
+                                  [*([w[0], " ".join(w[:2])] if len(w) > 1 else []),
+                                   *([w[2]] if len(w) > 2 else []), *([" ".join(w[2:4])] if len(w) > 3 else [])]]
+    seen, res = set(), []
+    for x, strict in out:
+        if x.strip() and x not in seen:
+            seen.add(x)
+            res.append((x, strict))
+    return res
+
+
 def match_village(want: str, options: list[str]) -> str | None:
     """Excel village -> one portal option: exact (letters only, UTTAR = North), then prefix, then same consonants,
-    then consonant prefix. 'JUNA MAL / MAL' tries each name. Ambiguous or nothing -> None (hand work, no guess)."""
+    then same words, then consonant prefix, then one letter off. Candidates from village_candidates().
+    Ambiguous or nothing -> None (hand work, no guess)."""
     opts = [o for o in options if o and o.strip().lower() != "select"]
     cons = lambda x: re.sub(r"[AEIOUY]", "", x)
-    parts = [x.strip() for x in re.split(r"[/,;]", want or "") if x.strip()]
-    for part in (parts if len(parts) > 1 else [want]):        # several villages: the first one the portal has
+    for part, strict in village_candidates(want):       # the first name the portal has (uniquely)
         w = norm(part)
         if not w:
             continue
-        for test in (lambda o: norm(o) == w,
-                     lambda o: norm(o).startswith(w) or w.startswith(norm(o)),
-                     lambda o: cons(norm(o)) == cons(w),
-                     lambda o: sorted(norm(x) for x in o.split()) == sorted(norm(x) for x in part.split()),
-                     lambda o: len(cons(w)) >= 3 and cons(norm(o)).startswith(cons(w))):
+        exact = lambda o: norm(o) == w
+        prefix = lambda o: len(w) >= 4 and (norm(o).startswith(w) or w.startswith(norm(o)))
+        base = lambda x: re.sub(r"(NORTH|SOUTH|EAST|WEST)$", "", norm(x))      # 'Karodia (North)' -> KARODIA
+        near = lambda o: len(w) >= 5 and (one_edit(norm(o), w) or one_edit(base(o), base(part)))
+        loose = (lambda o: cons(norm(o)) == cons(w),
+                 lambda o: sorted(norm(x) for x in o.split()) == sorted(norm(x) for x in part.split()),
+                 lambda o: len(cons(w)) >= 3 and cons(norm(o)).startswith(cons(w)))
+        for test in ((exact, prefix, near) if strict else (exact, prefix, near, *loose)):
             hit = [o for o in opts if test(o)]
             if len(hit) == 1:
                 return hit[0]
@@ -225,13 +258,20 @@ def relative_name(raw: str, aadhaar_name: str) -> str:
 
 
 def form_values(scope, names) -> dict:
-    """{name: shown value} for inputs / selects in `scope` (select = its selected text)."""
+    """{name: shown value as text} for inputs / selects in `scope` (select = its selected text; missing = '')."""
     return scope.evaluate("""(el, names) => Object.fromEntries(names.map(n => {
         const e = el.querySelector(`[name="${n}"]`);
-        if (!e) return [n, null];
-        if (e.disabled || e.readOnly) return [n, {locked: true}];
+        if (!e) return [n, ''];
         return [n, e.tagName === 'SELECT' ? ((e.options[e.selectedIndex] || {}).text || '').trim() : (e.value || '').trim()];
     }))""", list(names))
+
+
+def locked_names(scope, names) -> set:
+    """The fields among `names` the portal has locked (disabled / read-only): its values, not ours."""
+    return set(scope.evaluate("""(el, names) => names.filter(n => {
+        const e = el.querySelector(`[name="${n}"]`);
+        return !!e && (e.disabled || e.readOnly);
+    })""", list(names)))
 
 
 def check_form(page, scope, want: dict, what: str, fixers: dict | None = None):
@@ -244,9 +284,9 @@ def check_form(page, scope, want: dict, what: str, fixers: dict | None = None):
         except ValueError:
             return a.upper() == b.upper()
     for attempt in range(2):
-        got = form_values(scope, want)
+        got, fixed_by_portal = form_values(scope, want), locked_names(scope, want)
         bad = {k: (got.get(k), v) for k, v in want.items()
-               if not isinstance(got.get(k), dict) and not same(got.get(k), v)}   # locked fields: the portal's
+               if k not in fixed_by_portal and not same(got.get(k), v)}   # locked fields: the portal's
         if not bad:
             return
         if attempt == 0 and fixers:
@@ -474,8 +514,7 @@ def process_row(page, d: dict, stage: dict, mark_submitting):
     tried, verified = [], False
     if known:
         page.wait_for_timeout(800)
-        portal_name = (form_values(p1, ["beneficiaryName"]).get("beneficiaryName") or "")
-        portal_name = "" if isinstance(portal_name, dict) else portal_name.strip()
+        portal_name = (form_values(p1, ["beneficiaryName"]).get("beneficiaryName") or "").strip()
         if not portal_name:
             portal_name = p1.locator('input[name="beneficiaryName"]').first.input_value().strip()
         if p1.locator("button:visible", has_text=BTN("REVERIFY")).count():
