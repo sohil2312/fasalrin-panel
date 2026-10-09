@@ -551,7 +551,18 @@
         <select id="master" style="max-width:420px"></select>
         <input type="file" id="mFile" accept=".xlsx">
         <button id="mUpBtn" disabled>Upload master</button>
+        <button id="colsBtn" type="button" aria-expanded="false" aria-controls="colsBox">Columns</button>
         <span id="mMsg" class="muted"></span>
+      </div>
+      <div id="colsBox" style="display:none;margin-top:10px">
+        <div class="row" style="margin-top:0">
+          <button id="colsCopy" type="button" class="primary">Copy headings</button>
+          <span id="colsMsg" class="muted">Paste into cell A1 of a blank Excel sheet · format Account / Aadhaar columns as Text</span>
+        </div>
+        <textarea id="colsText" readonly rows="1" aria-label="Column headings"
+          style="width:100%;margin-top:8px;font:inherit;font-size:.75rem;resize:none"></textarea>
+        <table style="margin-top:6px"><thead><tr><th>Column</th><th>Needed</th><th>Example / notes</th></tr></thead>
+          <tbody id="colsBody"></tbody></table>
       </div>
       <div class="hints"><span class="hint" style="--i:0"><svg class="ic"><use href="#i-up"/></svg><span>Upload once</span></span>
         <span class="hint" style="--i:1"><svg class="ic"><use href="#i-layers"/></svg><span>All branches</span></span>
@@ -787,6 +798,33 @@ const isPriList = c => /^branches\/\d+\/pri\/\d+_pri\.csv$/.test(c || "");
 const isPriRegList = c => /^branches\/\d+\/prireg\/\d+_prireg\.csv$/.test(c || "");
 const isFreshList = c => /^branches\/\d+\/fresh\/\d+_fresh\.csv$/.test(c || "");
 const listScheme = c => isFreshList(c) ? "fresh" : isPriRegList(c) ? "prireg" : isPriList(c) ? "pri" : isAddList(c) ? "additional" : "regular";
+// column headings of each file type: shown in the panel and copied as one tab-separated row (no download needed)
+const COLUMNS = {
+  regular: [
+    ["Sol ID", "yes", "3106 — one file can hold all branches"], ["Branch Name", "yes", "KADANAGAM"],
+    ["Account No.", "yes", "31060500000001 (Text)"], ["Cust id", "no", "R00000001"],
+    ["Scheme Code", "yes", "CC004 crop loan · CC043 KCC AH"], ["Disb. Date", "yes", "18-03-2026 (dd-mm-yyyy)"],
+    ["Repay. Date", "no", "31-03-2026"], ["DP", "yes", "122000 (more than 0)"], ["Int Sub Amt", "no", "64"],
+    ["Aadhaar No.", "yes", "12 digits (Text)"], ["Status", "yes", "Pending / Draft rows are worked"], ["PORTAL", "no", ""],
+    ["ADDRESS", "empty activity", "AT KARODIYA PO SARASADI , TA KADANA , … — village found from it"],
+    ["SURVEY NO", "CC004, empty activity", "338"], ["KHATA NO", "CC004, empty activity", "147"],
+    ["LAND", "CC004, empty activity", "0.25 (land area)"]],
+  fresh: [
+    ["Sol ID", "yes", "3106"], ["Branch Name", "yes", "KADANAGAM"], ["Account No.", "yes", "Text"], ["Cust id", "no", ""],
+    ["Scheme Code", "yes", "CC004 / CC043"], ["Disb. Date", "yes", "dd-mm-yyyy"], ["Repay. Date", "no", ""],
+    ["DP", "yes", "more than 0"], ["Int Sub Amt", "no", ""], ["Aadhaar No.", "yes", "12 digits (Text)"],
+    ["DOB", "yes", "dd-mm-yyyy"], ["NAME AS PER ADHAR", "yes", ""], ["GENDER", "yes", "M / F"],
+    ["RELATIVE NAME", "no", "blank → Aadhaar name"], ["MO NO", "no", "blank → 9876543210"], ["ADDRESS", "yes", ""],
+    ["VILLAGE", "yes", ""], ["SURVEY NO", "CC004", ""], ["KHATA NO", "CC004", ""], ["LAND", "CC004", "land area"]],
+};
+function showCols(t) {
+  const cols = COLUMNS[t];
+  $("colsBtn").style.display = cols ? "" : "none";
+  if (!cols) { $("colsBox").style.display = "none"; $("colsBtn").setAttribute("aria-expanded", "false"); return; }
+  $("colsText").value = cols.map(c => c[0]).join("	");
+  $("colsBody").innerHTML = cols.map(c => `<tr><td><b>${esc(c[0])}</b></td><td>${esc(c[1])}</td><td>${esc(c[2])}</td></tr>`).join("");
+  $("colsMsg").textContent = "Paste into cell A1 of a blank Excel sheet · format Account / Aadhaar columns as Text";
+}
 const SCHEME_NAME = {regular: "IS regular", additional: "IS additional", pri: "PRI additional", prireg: "PRI regular",
                      fresh: "IS fresh"};
 function scheme() { const s = document.querySelector('input[name="scheme"]:checked'); return s ? s.value : "regular"; }
@@ -921,6 +959,7 @@ function setTab(t, save = true) {
   const fresh = t === "fresh";                    // IS fresh: no master / build, the branch's own file is the list
   $("masterCard").style.display = $("buildCard").style.display = fresh ? "none" : "";
   $("freshUp").style.display = fresh ? "" : "none";
+  showCols(t);
   $("repTitle").textContent = fresh ? "1 · Upload branch file & match report" : "3 · Select branch & match approved report";
   $("startTitle").textContent = `${fresh ? 2 : 4} · Start — ${SCHEME_NAME[t]}`;
   pendLabel = {regular: "pending in master", additional: "Int Sub Amt > 0", pri: "3% PRI > 0", prireg: "3% PRI > 0", fresh: "new farmers"}[t];
@@ -1022,6 +1061,23 @@ $("fUpBtn").onclick = async () => {
     + (r.area_col ? ` Land area: <b>${esc(r.area_col)}</b>.` : ` <span class="err">No LAND AREA column: crop rows → NO_LAND.</span>`);
   csvChoice = r.csv.replace(/\\/g, "/"); lastScheme = null; poll();
 };
+$("colsBtn").addEventListener("click", () => {
+  const open = $("colsBox").style.display === "none";
+  $("colsBox").style.display = open ? "" : "none";
+  $("colsBtn").setAttribute("aria-expanded", String(open));
+});
+$("colsCopy").addEventListener("click", async () => {
+  const box = $("colsText");
+  let ok = false;
+  box.focus(); box.select();                       // works on http from another PC too (no clipboard permission)
+  try { ok = document.execCommand("copy"); } catch (e) {}
+  if (!ok) {
+    try { await Promise.race([navigator.clipboard.writeText(box.value),
+                              new Promise((_, no) => setTimeout(no, 1500))]); ok = true; } catch (e) {}
+  }
+  $("colsMsg").textContent = ok ? "Copied — paste into cell A1 in Excel (headings fill one row)"
+                                : "Select the box above and press Ctrl+C";
+});
 $("mFile").addEventListener("change", () => { $("mUpBtn").disabled = !$("mFile").files.length; $("mMsg").textContent = ""; });
 $("mUpBtn").onclick = async () => {
   const file = $("mFile").files[0];

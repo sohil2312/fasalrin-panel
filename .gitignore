@@ -32,3 +32,4 @@ dist/
 
 # dummy sample files for the panel (no real data)
 !samples/*.csv
+!samples/*.xlsx
