@@ -103,7 +103,7 @@ def our_claims() -> dict:
 
 def read_preview(page) -> dict:
     """Label/value pairs on /claim-application-preview (as in the proven rollover verify.py)."""
-    for _ in range(100):                       # up to ~10 s for the values to render
+    for _ in range(200):                       # up to ~10 s for the values to render (every 50 ms)
         d = page.evaluate("""() => {
             const out = {};
             for (const l of document.querySelectorAll('p.dataPreviewLabel')) {
@@ -118,13 +118,13 @@ def read_preview(page) -> dict:
         }""")
         if d.get("Claim No.") and d.get("Applicable IS"):
             return d
-        page.wait_for_timeout(100)
+        page.wait_for_timeout(50)
     raise RuntimeError("claim preview never populated")
 
 
 # ---- learning the portal's preview data (so a later version can read it without waiting for the screen) ----
 LEARN_FILE = "logs/preview_api_learn.json"
-LEARN_MAX = 3                         # previews to learn from per run
+LEARN_MAX = 0                         # off: the portal's answers do not hold the preview values (learned 13-10-2026)
 _learn = {"n": 0, "resp": []}
 
 
@@ -604,6 +604,7 @@ def main(limit: int, assume_yes: bool):
                 continue
             stage = {"s": "review"}
             print(f"\r[{approved + errors + 1:>4}] {row['claim']}  acct {row['acct']}  checking...   ", end="", flush=True)
+            T.reset()
             try:
                 result, detail = review_and_approve(page, row, mine, disb_of.get(row["acct"], ""), stage)
                 log(row["acct"], row["app"], row["claim"], result, detail)
@@ -614,6 +615,8 @@ def main(limit: int, assume_yes: bool):
                           f"  mismatch {mismatched}  errors {errors}", flush=True)
                     if "/claim-application-list" not in page.url or not list_rows(page):
                         refresh_list(page)
+                    T.mark("list")
+                    print(T.line(), flush=True)
                 else:
                     seen.add(row["claim"])
                     mismatched += 1
