@@ -253,7 +253,7 @@ def running() -> bool:
 
 
 def start_job(kind: str, csv_name: str, answer: str, limit: int = 0, retry_reverify: bool = False,
-              only_reverify: bool = False) -> str | None:
+              only_reverify: bool = False, others: bool = False) -> str | None:
     """Returns an error text, or None when started."""
     if kind not in JOBS:
         return "unknown job"
@@ -282,6 +282,8 @@ def start_job(kind: str, csv_name: str, answer: str, limit: int = 0, retry_rever
             args += ["--retry-reverify"]          # Aadhaar-reverify rows not retried before: once more
         if kind != "entry" and limit > 0:
             args += ["--limit", str(limit)]
+        if others and kind in ("claim_approve", "isclaim_approve"):
+            args += ["--others"]                  # also claims filed by hand / on another computer (checked)
         env = dict(os.environ, NO_PROMPT="1", PYTHONIOENCODING="utf-8", FASALRIN_INSTANCE=INSTANCE)
         if (ROOT / spec["log"]).exists():          # the previous run's log stays readable
             os.replace(ROOT / spec["log"], ROOT / (Path(spec["log"]).stem + ".prev.log"))
@@ -711,7 +713,8 @@ class Handler(BaseHTTPRequestHandler):
             except (TypeError, ValueError):
                 limit = 0
             err = start_job(body.get("kind", ""), body.get("csv", ""), body.get("answer", ""), limit,
-                            bool(body.get("retry_reverify")), bool(body.get("only_reverify")))
+                            bool(body.get("retry_reverify")), bool(body.get("only_reverify")),
+                            bool(body.get("others")))
             return self._send(400 if err else 200, {"error": err} if err else {"ok": True})
         if self.path in ("/api/report_upload", "/api/report_match"):
             name = body.get("csv", "")

@@ -707,6 +707,9 @@
         <label class="choice" style="margin-top:12px"><input type="checkbox" id="approveOk">
           <span id="okText">Yes, approve every application listed as Submitted for the branch</span>
           <small id="okSmall">⚠ Can't be undone</small></label>
+        <label class="choice" id="othersBox" style="margin-top:8px;display:none"><input type="checkbox" id="othersOk">
+          Also approve claims filed by hand / on another computer
+          <small>Only after the checks against the claim file: account, Int Sub Amt, max claim, dates, not rollover</small></label>
         <label for="limitN">At most <input type="number" id="limitN" class="limit" min="1" step="1" placeholder="all">
           this run <small class="muted">· empty = all · 2 = test</small></label>
       </div>
@@ -893,6 +896,8 @@ function refreshForm(locked) {
   if (kind() !== lastKind) $("retryReverify").checked = $("onlyReverify").checked = false;   // never carried over
   if ($("onlyReverify").checked) $("retryReverify").checked = true;
   $("qApprove").classList.toggle("show", !!CONFIRM[kind()]);
+  $("othersBox").style.display = ["claim_approve", "isclaim_approve"].includes(kind()) ? "" : "none";
+  if (kind() !== lastKind) $("othersOk").checked = false;      // never carried over to another job
   if (kind() !== lastKind && CONFIRM[kind()]) {     // a confirmation is never carried over to another job
     $("approveOk").checked = false; [$("okText").textContent, $("okSmall").textContent] = CONFIRM[kind()];
   }
@@ -913,7 +918,8 @@ $("startBtn").onclick = async () => {
   const lim = CONFIRM[kind()] ? parseInt($("limitN").value || "0", 10) || 0 : 0;
   const res = await post("/api/start", {kind: kind(), csv: $("csv").value, answer: answer(), limit: lim,
                                         retry_reverify: kind() === "entry" && $("retryReverify").checked,
-                                        only_reverify: kind() === "entry" && $("onlyReverify").checked});
+                                        only_reverify: kind() === "entry" && $("onlyReverify").checked,
+                                        others: ["claim_approve", "isclaim_approve"].includes(kind()) && $("othersOk").checked});
   if (res.error) $("startErr").textContent = res.error;
   poll();
 };
