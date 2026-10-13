@@ -217,6 +217,7 @@ def live_page(ctx, page):
     page.goto(f.BASE, wait_until="domcontentloaded")
     if f.is_logged_out(page):
         f.require_login(page, "The browser tab was closed")
+    f.no_scroll(page)
     return page
 
 
@@ -230,8 +231,8 @@ def approve_one(page, row) -> str:
     tr = page.locator("table tbody tr", has_text=app).first
     tr.locator("button", has_text=BTN("REVIEW")).first.click()
     body_now = lambda: re.sub(r"\s+", " ", page.evaluate("() => document.body.innerText"))
-    wait_for(page, lambda: "/loan-application-preview" in page.url and
-             page.locator("button:visible", has_text=BTN("APPROVE")).count(), f.STUCK_TIMEOUT_S, "preview page")
+    f.LIMITS.wait(page, "loan preview", lambda: "/loan-application-preview" in page.url and
+                  page.locator("button:visible", has_text=BTN("APPROVE")).count(), "preview page")
     try:                                             # the account shows a moment after APPROVE: wait just for it
         wait_for(page, lambda: not acct or acct in body_now(), 5, "account on the preview")
     except StuckError:
@@ -330,6 +331,7 @@ def main(limit: int, assume_yes: bool):
                 ctx.close()
                 return
             print(f"[login] branch check: portal '{got or '?'}' = work list '{want}'")
+            f.no_scroll(page)   # logged in: no scrolling from here on
 
         f.lighten(ctx)                                # logged in: no pictures / trackers from here on
         open_list(page)

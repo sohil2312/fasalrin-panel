@@ -457,6 +457,7 @@ def main(limit: int, assume_yes: bool, only: str = ""):
             ctx.close()
             return
         print(f"[login] branch check: portal '{got or '?'}' = SOL {sol} ({' / '.join(sorted(names)) or '?'})")
+        f.no_scroll(page)   # logged in: no scrolling from here on
 
         if todo and not assume_yes:
             print(f"\n  {SCHEME.upper()} claims will be FILED (COMPLETE, start = Disb. Date, end = Repay. Date, "

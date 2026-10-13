@@ -201,6 +201,7 @@ def main(limit: int, assume_yes: bool):
             ctx.close()
             return
         print(f"[login] branch check: portal '{got or '?'}' = SOL {sol} ({' / '.join(sorted(names)) or '?'})")
+        f.no_scroll(page)   # logged in: no scrolling from here on
 
         open_list(page)
         if ours and not assume_yes:

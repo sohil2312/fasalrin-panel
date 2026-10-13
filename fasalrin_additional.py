@@ -562,6 +562,7 @@ def main(limit: int, assume_yes: bool, only: str = ""):
                 ctx.close()
                 return
             print(f"[login] branch check: portal '{got or '?'}' = work list '{want}'")
+            f.no_scroll(page)   # logged in: no scrolling from here on
         if todo and not assume_yes:
             print("\n  IS ADDITIONAL (rollover) claims will be FILED (row with start = Disb. Date and end 31/03/2025,"
                   " rollover date = Repay. Date, IS = Int Sub Amt or the max allowed if lower). Cannot be undone.")

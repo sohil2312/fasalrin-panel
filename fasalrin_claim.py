@@ -227,6 +227,68 @@ def find_rows(page, acct) -> list[dict]:
     }""")
 
 
+def _page_rows(page) -> list[dict]:
+    """All rows of the claim list page shown: [{acct, app, status}]."""
+    return page.evaluate(r"""() => {
+        const t = [...document.querySelectorAll('table')].find(t => /Loan Application No/i.test(t.innerText));
+        if (!t) return [];
+        const head = [...t.querySelectorAll('thead th')].map(th => th.innerText.trim());
+        const col = re => head.findIndex(h => re.test(h));
+        const ia = col(/^Account No/i), ip = col(/Loan Application No/i), is = col(/^Status/i);
+        return [...t.querySelectorAll('tbody tr')].map(tr => {
+            const c = [...tr.children].map(td => td.innerText.trim());
+            return {acct: c[ia] || '', app: c[ip] || '', status: c[is] || ''};
+        }).filter(r => /^\d+$/.test(r.acct));
+    }""")
+
+
+def _next_page(page) -> bool:
+    """Next numbered page of the list; False on the last page."""
+    sel = page.locator("ul.pagination-container li.pagination-item.selected")
+    try:
+        cur = int(sel.first.inner_text().strip()) if sel.count() else 1
+    except ValueError:
+        cur = 1
+    tabs = page.locator("ul.pagination-container li.pagination-item:not(.pagination-icon)")
+    for i in range(tabs.count()):
+        try:
+            n = int(tabs.nth(i).inner_text().strip())
+        except ValueError:
+            continue
+        if n == cur + 1:
+            before = [r["acct"] for r in _page_rows(page)]
+            tabs.nth(i).click()
+            wait_for(page, lambda: sel.count() and sel.first.inner_text().strip() == str(n)
+                     and [r["acct"] for r in _page_rows(page)] != before, 20, f"list page {n}")
+            return True
+    return False
+
+
+def read_pending(page) -> set | None:
+    """Every account the portal's Pending list (FY / IS / PENDING) shows, read page by page once - instead of
+    searching accounts that are not pending. None when the list could not be read completely (then each
+    account is searched, as before)."""
+    accts, seen, pages = set(), 0, 0
+    m = re.search(r"Total Count\s*:?\s*(\d+)", f.body_text(page), re.I)
+    total = int(m.group(1)) if m else None
+    try:
+        while pages < 2000:
+            rows = _page_rows(page)
+            seen += len(rows)
+            accts.update(r["acct"] for r in rows if r["status"].lower() == "pending")
+            pages += 1
+            if not _next_page(page):
+                break
+    except Exception as e:
+        print(f"[list] could not read the whole Pending list ({type(e).__name__}): searching each account", flush=True)
+        return None
+    if total is not None and seen < total:
+        print(f"[list] read {seen} of {total} Pending rows only: searching each account", flush=True)
+        return None
+    print(f"[list] Pending list read: {len(accts)} accounts on {pages} page(s)", flush=True)
+    return accts
+
+
 def _table_amounts(page):
     """(loan sanctioned from the activity table, Maximum Allowed Claim) on the claim form."""
     return page.evaluate(r"""() => {
@@ -265,8 +327,8 @@ def file_claim(page, row, intsub, disb, mark_submitting):
     """ADD -> fill -> SAVE & CONTINUE -> SUBMIT. Returns (sanctioned, max_allowed, claimed)."""
     tr = page.locator("table tbody tr", has_text=row["acct"]).first
     tr.locator("button", has_text=BTN("ADD")).first.click()
-    wait_for(page, lambda: "/claim-against-loan-app" in page.url and
-             page.locator('input[name="maxWithdrawalAmount"]').count(), f.STUCK_TIMEOUT_S, "claim form")
+    f.LIMITS.wait(page, "claim form", lambda: "/claim-against-loan-app" in page.url and
+                  page.locator('input[name="maxWithdrawalAmount"]').count(), "claim form")
 
     # the date fields stay greyed out (covered) until IS Submission Type is chosen -> choose it first
     _select(page, "priSubmissionType", SUBMISSION_TYPE)
@@ -398,6 +460,7 @@ def main(limit: int, assume_yes: bool):
                 ctx.close()
                 return
             print(f"[login] branch check: portal '{got or '?'}' = work list '{want}'")
+            f.no_scroll(page)   # logged in: no scrolling from here on
 
         if todo and not assume_yes:
             print(f"\n  IS claims will be FILED for the applications above (repayment {REPAY_DATE:%d-%m-%Y}, "
@@ -411,6 +474,26 @@ def main(limit: int, assume_yes: bool):
         open_list(page)
         claimed = waiting = errors = walked = 0
         cnt = {}
+        # fast: read the Pending list once, then work only on accounts that are on it (others: NOT_PENDING,
+        # recorded once, tried again next run). Small lists are simply searched.
+        if sum(1 for t in todo if t[2] > 0) > 20:
+            pend = read_pending(page)
+            if pend is not None:
+                keep, skip = [], 0
+                for t in todo:
+                    if t[2] <= 0 or t[0] in pend:
+                        keep.append(t)
+                        continue
+                    skip += 1
+                    if done.get(t[0]) != "NOT_PENDING":       # recorded once, not on every run
+                        log_claim(t[0], t[1], "", "", t[2], "", "NOT_PENDING",
+                                  "not in the portal's Pending list (loan not approved yet, or claimed by hand); "
+                                  "tried again next run")
+                waiting += skip
+                print(f"[list] {len(keep)} of {len(todo)} to claim are Pending on the portal; "
+                      f"{skip} not pending now (skipped without searching)", flush=True)
+                todo = keep
+            open_list(page)                              # back on page 1 with the filters
         for acct, app, intsub, disb in todo:
             if os.path.exists(f.STOP_FLAG):
                 print("\n[stop] stop requested — stopping between claims")

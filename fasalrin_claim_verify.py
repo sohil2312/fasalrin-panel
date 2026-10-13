@@ -70,6 +70,7 @@ def live_page(ctx, page):
     page.goto(f.BASE, wait_until="domcontentloaded")
     if f.is_logged_out(page):
         f.require_login(page, "The browser tab was closed")
+    f.no_scroll(page)
     return page
 
 
@@ -361,8 +362,8 @@ def review_and_approve(page, row, mine, disb, stage):
     T.mark("find")
     tr = page.locator("table tbody tr", has_text=row["claim"]).first
     tr.locator("button", has_text=BTN("REVIEW")).first.click()
-    wait_for(page, lambda: "/claim-application-preview" in page.url and
-             page.locator("button:visible", has_text=BTN("APPROVE")).count(), f.STUCK_TIMEOUT_S, "claim preview")
+    f.LIMITS.wait(page, "claim preview", lambda: "/claim-application-preview" in page.url and
+                  page.locator("button:visible", has_text=BTN("APPROVE")).count(), "claim preview")
     T.mark("review")
     d = read_preview(page)
     T.mark("preview")
@@ -438,6 +439,7 @@ def main(limit: int, assume_yes: bool):
                 ctx.close()
                 return
             print(f"[login] branch check: portal '{got or '?'}' = work list '{want}'")
+            f.no_scroll(page)   # logged in: no scrolling from here on
 
         f.lighten(ctx)                                # logged in: no pictures / trackers from here on
         open_list(page)

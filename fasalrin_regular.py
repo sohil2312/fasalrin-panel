@@ -59,6 +59,7 @@ import argparse
 import collections
 import csv
 import io
+import json
 import os
 import re
 import sys
@@ -103,21 +104,100 @@ BROWSER_ARGS = ["--start-maximized"] + (["--window-position=0,0", "--window-size
 PAGE_ZOOM = float(os.environ.get("FASALRIN_ZOOM") or (0.75 if sys.platform == "darwin" else 1))
 
 
+# no scrolling at all (default on macOS; FASALRIN_NOSCROLL=0 / 1 to change): after login the page area is made
+# 5000 px tall, so every button is always inside it and the browser never scrolls. The window shows the top part;
+# popups and the bottom of long pages are worked outside the window (follow the job in the panel). The login page
+# keeps the normal size, so the captcha is always visible.
+NO_SCROLL = (os.environ.get("FASALRIN_NOSCROLL") or ("1" if sys.platform == "darwin" else "0")) == "1"
+TALL = 5000
+_view = {}
+
+
+def no_scroll(page):
+    if not NO_SCROLL:
+        return
+    try:
+        if "normal" not in _view:
+            w, h = page.evaluate("[window.innerWidth, window.innerHeight]")
+            _view["normal"] = {"width": int(w), "height": int(h)}
+        page.set_viewport_size({"width": _view["normal"]["width"], "height": TALL})
+        _view["tall"] = True
+    except Exception:
+        pass
+
+
+def _normal_view(page):
+    """Back to the window's size (for a login), returns whether it was tall."""
+    if not _view.get("tall") or "normal" not in _view:
+        return False
+    try:
+        page.set_viewport_size(_view["normal"])
+    except Exception:
+        pass
+    _view["tall"] = False
+    return True
+
+
+# portal animations off (popups fade in / out ~0.3 s each, several per row): they appear at once.
+# FASALRIN_ANIM=1 keeps them.
+NO_ANIM = os.environ.get("FASALRIN_ANIM") != "1"
+_NO_ANIM_CSS = ("*, *::before, *::after { transition: none !important; transition-duration: 0s !important;"
+                " animation: none !important; animation-duration: 0s !important; scroll-behavior: auto !important; }")
+
+
 def zoom_out(ctx):
-    """Every page of this browser at PAGE_ZOOM (CSS zoom; clicks and reading work the same)."""
-    if PAGE_ZOOM >= 0.999 or PAGE_ZOOM < 0.4:
+    """Every page of this browser: animations off (NO_ANIM) and zoomed to PAGE_ZOOM (CSS zoom; clicks and
+    reading work the same)."""
+    z = PAGE_ZOOM if 0.4 <= PAGE_ZOOM < 0.999 else 0
+    if not z and not NO_ANIM:
         return
     try:
         ctx.add_init_script("""(() => {
-            const z = '%s';
-            const apply = () => { if (document.documentElement && document.documentElement.style.zoom !== z)
-                                      document.documentElement.style.zoom = z; };
+            const z = '%s', css = %s;
+            const apply = () => {
+                const d = document.documentElement;
+                if (!d) return;
+                if (z !== '0' && d.style.zoom !== z) d.style.zoom = z;
+                if (css && !document.getElementById('fasalrin-fast')) {
+                    const s = document.createElement('style');
+                    s.id = 'fasalrin-fast'; s.textContent = css;
+                    (document.head || d).appendChild(s);
+                }
+            };
             apply();
             document.addEventListener('DOMContentLoaded', apply);
             new MutationObserver(apply).observe(document, {childList: true});
-        })();""" % PAGE_ZOOM)
+        })();""" % (z, json.dumps(_NO_ANIM_CSS if NO_ANIM else "")))
     except Exception:
         pass
+
+
+class Limits:
+    """Time limits that fit each step: once a step has been seen 5 times, its wait gives up after 5 x its usual
+    time (at least 10 s, at most STUCK_TIMEOUT_S), so a stuck screen is found in seconds, not a minute.
+    Only for waits that are safe to retry (opening a preview / form / list) - never right after
+    SAVE / SUBMIT / APPROVE / CONFIRM."""
+    def __init__(self, floor=10.0, factor=5.0):
+        self.obs = collections.defaultdict(list)
+        self.floor, self.factor = floor, factor
+
+    def limit(self, key) -> float:
+        xs = self.obs[key][-30:]
+        if len(xs) < 5:
+            return STUCK_TIMEOUT_S
+        med = sorted(xs)[len(xs) // 2]
+        return min(STUCK_TIMEOUT_S, max(self.floor, self.factor * med))
+
+    def wait(self, page, key, fn, what):
+        t = time.time()
+        v = wait_for(page, fn, self.limit(key), what)
+        self.obs[key].append(time.time() - t)
+        return v
+
+
+LIMITS = Limits()
+
+
 PROFILE_DIR = ".pw_profile"
 SLOWMO_MS   = 30
 NO_PROMPT   = os.environ.get("NO_PROMPT") == "1"   # 1 = never wait for ENTER; poll for login instead
@@ -312,10 +392,13 @@ def is_logged_out(page) -> bool:
 
 def require_login(page, reason="Session logged out"):
     was_light, LIGHT["on"] = LIGHT["on"], False          # the login page shows everything (captcha)
+    was_tall = _normal_view(page)                        # ... at the window's size
     try:
         _require_login(page, reason)
     finally:
         LIGHT["on"] = was_light
+        if was_tall:
+            no_scroll(page)
 
 
 def _require_login(page, reason):
@@ -1372,6 +1455,7 @@ def main():
                 ctx.close()
                 return
             print(f"[login] branch check: portal '{got or '?'}' = work list '{want}'")
+            no_scroll(page)   # logged in: no scrolling from here on
 
         # rows[i] is CSV/Excel row i+1 (row 1 = header); --start-row N leaves rows 2..N-1 alone
         first = max(START_ROW - 1, 1)

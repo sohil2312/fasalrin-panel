@@ -159,6 +159,7 @@ def main(limit: int, assume_yes: bool):
                 ctx.close()
                 return
             print(f"[login] branch check: portal '{got or '?'}' = work list '{want}'")
+            f.no_scroll(page)   # logged in: no scrolling from here on
 
         cv.open_list(page)                       # same list as IS regular: 2025-2026 / IS / SUBMITTED / ALL / Branch
         if ours and not assume_yes:

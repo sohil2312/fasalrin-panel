@@ -972,6 +972,7 @@ def run(csv_path: Path):
             print(f"\n  !! WRONG LOGIN: the portal is logged in as branch '{got}', this work list is '{want}'. Nothing entered.")
             ctx.close(); return
         print(f"[login] branch check: portal '{got or '?'}' = work list '{want}'", flush=True)
+        f.no_scroll(page)   # logged in: no scrolling from here on
 
         print(f"[start] {len(todo)} rows pending\n", flush=True)
         cnt = collections.Counter()
