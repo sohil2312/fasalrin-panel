@@ -131,6 +131,7 @@ def main(limit: int, assume_yes: bool):
         ctx = p.chromium.launch_persistent_context(PROFILE_DIR, headless=f.HEADLESS, slow_mo=f.SLOWMO_MS,
                                                    viewport=None, args=f.BROWSER_ARGS)
         ctx.set_default_timeout(f.STUCK_TIMEOUT_S * 1000)
+        f.zoom_out(ctx)
         page = ctx.pages[0] if ctx.pages else ctx.new_page()
         page.goto(f.BASE, wait_until="domcontentloaded")
         print("\n" + "=" * 70)

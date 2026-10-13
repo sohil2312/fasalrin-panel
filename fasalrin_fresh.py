@@ -957,6 +957,7 @@ def run(csv_path: Path):
         ctx = p.chromium.launch_persistent_context(f.PROFILE_DIR, headless=False, slow_mo=0,
                                                    viewport=None, args=f.BROWSER_ARGS)
         ctx.set_default_timeout(f.STUCK_TIMEOUT_S * 1000)
+        f.zoom_out(ctx)
         page = ctx.pages[0] if ctx.pages else ctx.new_page()
         page.goto(f.BASE, wait_until="domcontentloaded")
         print("\n  LOG IN in the browser window with the Branch User login (mobile + password + captcha).", flush=True)

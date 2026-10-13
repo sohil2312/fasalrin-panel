@@ -98,6 +98,26 @@ HEADLESS    = False
 # portal pages scroll up and down for every button: there the window is sized to the screen (macOS clamps it)
 BROWSER_ARGS = ["--start-maximized"] + (["--window-position=0,0", "--window-size=1920,1200"]
                                         if sys.platform == "darwin" else [])
+# portal pages zoomed out so a whole form / list fits the screen: the browser then does not scroll up and down
+# to reach every button and box. Mac default 0.75 (laptop screen); Windows 1 (no change). FASALRIN_ZOOM=1 turns it off.
+PAGE_ZOOM = float(os.environ.get("FASALRIN_ZOOM") or (0.75 if sys.platform == "darwin" else 1))
+
+
+def zoom_out(ctx):
+    """Every page of this browser at PAGE_ZOOM (CSS zoom; clicks and reading work the same)."""
+    if PAGE_ZOOM >= 0.999 or PAGE_ZOOM < 0.4:
+        return
+    try:
+        ctx.add_init_script("""(() => {
+            const z = '%s';
+            const apply = () => { if (document.documentElement && document.documentElement.style.zoom !== z)
+                                      document.documentElement.style.zoom = z; };
+            apply();
+            document.addEventListener('DOMContentLoaded', apply);
+            new MutationObserver(apply).observe(document, {childList: true});
+        })();""" % PAGE_ZOOM)
+    except Exception:
+        pass
 PROFILE_DIR = ".pw_profile"
 SLOWMO_MS   = 30
 NO_PROMPT   = os.environ.get("NO_PROMPT") == "1"   # 1 = never wait for ENTER; poll for login instead
@@ -1323,6 +1343,7 @@ def main():
             viewport=None, args=BROWSER_ARGS,
         )
         ctx.set_default_timeout(STUCK_TIMEOUT_S * 1000)
+        zoom_out(ctx)
         page = ctx.pages[0] if ctx.pages else ctx.new_page()
         page.goto(BASE, wait_until="domcontentloaded")
 
