@@ -37,7 +37,7 @@ import fasalrin_regular as f
 import fasalrin_claim as cl
 import fasalrin_claim_verify as cv
 import fasalrin_pri as pri
-from fasalrin_regular import BTN, wait_for, shot, money_to_float
+from fasalrin_regular import BTN, StuckError, wait_for, shot, money_to_float
 
 PROFILE_DIR = ".pw_profile_head"      # Branch Head profile
 CLAIM_FY, LOAN_FY = "2025-2026", "2024-2025"
@@ -141,11 +141,10 @@ def open_list(page):
     """Dashboard -> Claim Applications tab -> 'pending for Approval' View Details -> 2025-2026 / PRI /
     SUBMITTED / ALL / Branch -> PROCEED (the route the user showed)."""
     f.click_side_nav(page, "/dashboard")
-    page.wait_for_timeout(1000)
+    wait_for(page, lambda: "/dashboard" in page.url, 15, "dashboard")
     tab = page.locator(".nav-link", has_text=re.compile(r"^\s*Claim Applications\s*$", re.I))
     wait_for(page, lambda: tab.count(), 15, "Claim Applications tab")
     tab.first.click()
-    page.wait_for_timeout(800)
     btn = page.locator(".dashboard-box", has_text=re.compile("pending for Approval", re.I)) \
               .locator("button", has_text=re.compile("View Details", re.I))
     wait_for(page, lambda: btn.count(), f.STUCK_TIMEOUT_S, "'pending for Approval' View Details")
@@ -159,10 +158,39 @@ def open_list(page):
     if page.locator('select[name="branchOrPacs"]').count():
         cl._select(page, "branchOrPacs", "Branch")
     page.locator("button:visible", has_text=BTN("PROCEED")).first.click()
-    page.wait_for_timeout(1000)
-    wait_for(page, lambda: ("Total Count" in f.body_text(page) and page.locator("table.issCustomTable").count())
-             or "No record(s) found" in f.body_text(page), 90, "claim table")
-    page.wait_for_timeout(300)
+    wait_rows(page, 90)
+
+
+def wait_rows(page, seconds) -> bool:
+    """Wait for the list's ROWS (not just the table frame): True when rows show, False on 'No record(s) found'.
+    Reading the list the moment the frame appeared made the job think it was empty and stop early."""
+    state = wait_for(page, lambda: "rows" if cv.list_rows(page) else
+                     ("none" if "No record(s) found" in f.body_text(page) else None), seconds, "claim table")
+    if state == "none":                          # the message can linger a moment: look once more
+        page.wait_for_timeout(1500)
+        return bool(cv.list_rows(page))
+    return True
+
+
+def refresh_list(page):
+    """After an approval: PROCEED again on the list (filters stay) instead of the whole dashboard route."""
+    if "/claim-application-preview" in page.url:
+        back = page.locator("button:visible", has_text=BTN("BACK"))
+        if back.count():
+            back.first.click()
+            try:
+                wait_for(page, lambda: "/claim-application-list" in page.url, 15, "back on the claim list")
+            except StuckError:
+                pass
+    proceed = page.locator("button:visible", has_text=BTN("PROCEED"))
+    if "/claim-application-list" in page.url and proceed.count():
+        proceed.first.click()
+        try:
+            wait_rows(page, 30)
+            return
+        except StuckError:
+            pass
+    open_list(page)                              # not on the list: the full route
 
 
 def main(limit: int, assume_yes: bool):
@@ -224,9 +252,12 @@ def main(limit: int, assume_yes: bool):
             if not cand:
                 if cv.goto_next_page(page):
                     continue
-                open_list(page)
-                cand = [r for r in cv.list_rows(page) if r["status"].lower() == "submitted" and r["claim"]
-                        and r["claim"] not in seen and fails.get(r["claim"], 0) < MAX_ROW_FAILS]
+                for attempt in range(2):         # two fresh looks before saying "no more"
+                    open_list(page) if attempt else refresh_list(page)
+                    cand = [r for r in cv.list_rows(page) if r["status"].lower() == "submitted" and r["claim"]
+                            and r["claim"] not in seen and fails.get(r["claim"], 0) < MAX_ROW_FAILS]
+                    if cand:
+                        break
                 if not cand:
                     break
             row = cand[0]
@@ -260,7 +291,7 @@ def main(limit: int, assume_yes: bool):
                 print(f"\r[{approved + errors:>4}] {row['claim']}  acct {row['acct']}  APPROVED   | approved {approved}"
                       f"  mismatch {mismatched}  errors {errors}", flush=True)
                 if "/claim-application-list" not in page.url or not cv.list_rows(page):
-                    open_list(page)
+                    refresh_list(page)           # in place, not via the dashboard
             except KeyboardInterrupt:
                 raise
             except Exception as e:
