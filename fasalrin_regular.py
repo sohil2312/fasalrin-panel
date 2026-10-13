@@ -864,7 +864,15 @@ def pick_calendar_date(page, date_input, target: date):
             if cur == tgt:
                 break
             arrow = ".rmdp-right" if cur < tgt else ".rmdp-left"
-            page.locator(f".rmdp-arrow-container{arrow} >> visible=true").first.click()
+            btn = page.locator(f".rmdp-arrow-container{arrow} >> visible=true").first
+            if "disabled" in (btn.get_attribute("class") or ""):    # the portal's calendar ends here
+                try:
+                    page.keyboard.press("Escape")
+                except Exception:
+                    pass
+                raise DateMismatch(f"date {want} is {'after the last' if cur < tgt else 'before the earliest'} date "
+                                   f"the portal's calendar allows (it stops at {hdr})")
+            btn.evaluate("el => el.click()")             # no waiting on an element covering the arrow
             try:                                     # the month must change before it is read again
                 wait_for(page, lambda: header() and header() != hdr, 3, "calendar month to change")
             except StuckError:

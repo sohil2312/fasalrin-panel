@@ -674,7 +674,7 @@
         <label class="choice" data-scheme="regular"><input type="radio" name="kind" value="claim">File IS claims
           <small><svg class="ic"><use href="#i-user"/></svg>Branch User · approved loans</small></label>
         <label class="choice" data-scheme="regular"><input type="radio" name="kind" value="claim_approve">Approve IS claims
-          <small><svg class="ic"><use href="#i-shield"/></svg>Branch Head · our claims</small></label>
+          <small><svg class="ic"><use href="#i-shield"/></svg>Branch Head · all Submitted</small></label>
         <label class="choice" data-scheme="additional"><input type="radio" name="kind" value="additional">File IS additional claims
           <small><svg class="ic"><use href="#i-user"/></svg>Branch User · rollover</small></label>
         <label class="choice" data-scheme="additional"><input type="radio" name="kind" value="additional_approve">Approve IS additional claims
@@ -692,7 +692,7 @@
         <label class="choice" data-scheme="isclaim"><input type="radio" name="kind" value="isclaim">File IS claims
           <small><svg class="ic"><use href="#i-user"/></svg>Branch User · pending on portal</small></label>
         <label class="choice" data-scheme="isclaim"><input type="radio" name="kind" value="isclaim_approve">Approve IS claims
-          <small><svg class="ic"><use href="#i-shield"/></svg>Branch Head · our claims</small></label>
+          <small><svg class="ic"><use href="#i-shield"/></svg>Branch Head · all Submitted</small></label>
       </div>
 
       <div class="q" id="qEntry">
@@ -816,7 +816,7 @@ const CONFIRM = {   // [tick-box label, short reminder]
   approve: ["Yes, approve every application listed as Submitted for the branch", "⚠ Can't be undone"],
   claim: ["Yes, file IS claims for the branch's approved applications",
           "IS = lower of max claim / Int Sub Amt · ⚠ Can't be undone"],
-  claim_approve: ["Yes, approve the Submitted IS claims that the claim job filed",
+  claim_approve: ["Yes, approve every IS claim listed as Submitted for the branch",
                   "Preview checked first · ⚠ Can't be undone"],
   additional: ["Yes, file IS additional (rollover) claims for this branch",
                "Rollover = Repay. Date · IS = lower · ⚠ Can't be undone"],
@@ -834,7 +834,7 @@ const CONFIRM = {   // [tick-box label, short reminder]
                 "Checked vs work list · ⚠ Can't be undone"],
   isclaim: ["Yes, file IS claims for every account the portal lists as Pending",
             "Disb → 31-03-2026 · IS = lower of max claim / Int Sub Amt · ⚠ Can't be undone"],
-  isclaim_approve: ["Yes, approve the Submitted IS claims that the claim job filed",
+  isclaim_approve: ["Yes, approve every IS claim listed as Submitted for the branch",
                     "Preview checked first · ⚠ Can't be undone"],
 };
 const isAddList = c => /^branches\/\d+\/additional\/\d+_additional\.csv$/.test(c || "");
@@ -896,7 +896,7 @@ function refreshForm(locked) {
   if (kind() !== lastKind) $("retryReverify").checked = $("onlyReverify").checked = false;   // never carried over
   if ($("onlyReverify").checked) $("retryReverify").checked = true;
   $("qApprove").classList.toggle("show", !!CONFIRM[kind()]);
-  $("othersBox").style.display = ["claim_approve", "isclaim_approve"].includes(kind()) ? "" : "none";
+  $("othersBox").style.display = "none";          // every Submitted IS claim is approved now (no option)
   if (kind() !== lastKind) $("othersOk").checked = false;      // never carried over to another job
   if (kind() !== lastKind && CONFIRM[kind()]) {     // a confirmation is never carried over to another job
     $("approveOk").checked = false; [$("okText").textContent, $("okSmall").textContent] = CONFIRM[kind()];

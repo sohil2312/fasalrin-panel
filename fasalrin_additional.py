@@ -297,7 +297,11 @@ def pick_rollover_date(page, target: date):
         if cur == tgt:
             break
         arrow = ".rmdp-right" if cur < tgt else ".rmdp-left"
-        page.locator(f".rmdp-arrow-container{arrow}").first.click()
+        btn = page.locator(f".rmdp-arrow-container{arrow}").first
+        if "disabled" in (btn.get_attribute("class") or ""):        # the portal's calendar ends here
+            raise f.DateMismatch(f"date {target:%d/%m/%Y} is {'after the last' if cur < tgt else 'before the earliest'} "
+                                 f"date the portal's calendar allows (it stops at {hdr})")
+        btn.evaluate("el => el.click()")
         page.wait_for_timeout(120)
     else:
         raise f.DateMismatch(f"could not reach {target:%m/%Y} in calendar")

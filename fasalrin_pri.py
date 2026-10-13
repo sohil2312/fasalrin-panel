@@ -209,7 +209,10 @@ def pick_nearest(page, inp, target: date) -> date:
         cur = date(int(m.group(2)), f.MONTHS.index(m.group(1)) + 1, 1)
         want_month = (target.replace(day=1) + timedelta(days=32 * shift)).replace(day=1) if shift else target.replace(day=1)
         while cur != want_month:
-            page.locator(f".rmdp-arrow-container{'.rmdp-right' if cur < want_month else '.rmdp-left'}").first.click()
+            btn = page.locator(f".rmdp-arrow-container{'.rmdp-right' if cur < want_month else '.rmdp-left'}").first
+            if "disabled" in (btn.get_attribute("class") or ""):     # calendar ends: no nearer month that way
+                break
+            btn.evaluate("el => el.click()")
             page.wait_for_timeout(120)
             hdr = page.locator(".rmdp-header-values").first.inner_text()
             m = re.search(r"([A-Za-z]+)\D+(\d{4})", hdr)

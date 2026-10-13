@@ -248,6 +248,15 @@ def check_claim(d: dict, row: dict, mine: dict, disb: str) -> list[str]:
         probs.append(f"preview account {d.get('Account No.')!r} != row {row['acct']}")
     if d.get("Claim No.", "").strip() != row["claim"]:
         probs.append(f"preview claim {d.get('Claim No.')!r} != row {row['claim']}")
+    if mine.get("any"):                       # a claim in the list not filed by our job: the portal's own limits
+        portal_is, max_allowed = money_to_float(d.get("Applicable IS")), money_to_float(d.get("Maximum Allowed Claim"))
+        if portal_is <= 0:
+            probs.append("Applicable IS is 0")
+        if max_allowed > 0 and portal_is > max_allowed + 0.005:
+            probs.append(f"IS {portal_is:.2f} > Maximum Allowed Claim {max_allowed:.2f}")
+        if not re.search(r"SUBMITTED", d.get("_status", ""), re.I):
+            probs.append(f"status {d.get('_status')!r}")
+        return probs
     if mine["acct"] != row["acct"]:
         probs.append(f"our claim {row['claim']} was for account {mine['acct']}")
     if re.match(r"\s*yes", d.get("Is Rollover Claim", ""), re.I):
@@ -405,7 +414,8 @@ def approve_one(page, row) -> str:
     return m.group(1) if m else row["claim"]
 
 
-OTHERS = False                        # --others: also claims not filed by our job (filed by hand / on another computer)
+OTHERS = True                         # every Submitted IS claim in the list is approved (user: "verify until the
+                                      # list is empty"); claims our job filed also get the checks against our records
 
 
 def main(limit: int, assume_yes: bool):
@@ -415,9 +425,8 @@ def main(limit: int, assume_yes: bool):
     disb_of = {r[idx[f.COL_ACCT]].strip(): r[idx[f.COL_DISB]].strip() for r in rows[1:]} if f.COL_DISB in idx else {}
     intsub_of = {r[idx[f.COL_ACCT]].strip(): money_to_float(r[idx["Int Sub Amt"]]) for r in rows[1:]} \
         if "Int Sub Amt" in idx else {}
-    if OTHERS:
-        print(f"[others] also claims filed by hand / on another computer: approved only after the checks against "
-              f"the claim file ({sum(1 for v in intsub_of.values() if v > 0)} accounts with Int Sub Amt)")
+    print("[all] every IS claim listed as Submitted for the branch is approved (until the list is empty); "
+          "ours are also checked against our records")
     print(f"[claims] {CLAIMS_CSV}: {len(ours)} claims filed by the script (only these, after checks, get approved)")
 
     with sync_playwright() as p:
@@ -471,10 +480,10 @@ def main(limit: int, assume_yes: bool):
         dec = decided()
         targets = [(cn, m) for cn, m in ours.items() if dec.get(cn) not in ("APPROVED", "MISMATCH", "CHECK_PORTAL")]
         walk = bool(targets) or OTHERS                 # page through the whole list (slow) only without search
-        if not targets and not OTHERS:
+        if False:
             print(f"[search] none of our {len(ours)} filed claims is waiting for approval in this computer's records "
                   f"({CLAIMS_CSV}): nothing to approve. Claims filed on another computer need its records file.")
-        if targets and can_search(page):
+        if targets and can_search(page) and not OTHERS:
             walk = False
             pending = dict(targets)                    # claim no -> ours, still to approve
             total = len(pending)
@@ -565,13 +574,7 @@ def main(limit: int, assume_yes: bool):
                         pass
             if streak >= MAX_ERROR_STREAK:
                 print(f"\n[stop] {streak} errors in a row - stopping (portal slow / down?). Rerun to continue.")
-        if OTHERS:
-            walk = True                                # then the rest of the list: claims filed elsewhere
-            try:
-                page = live_page(ctx, page)
-                open_list(page)                        # the whole list again (no account search left in the box)
-            except Exception:
-                pass
+        walk = True                                    # the whole Submitted list, first row first, until empty
         while walk and not (limit and approved >= limit) and streak < MAX_ERROR_STREAK:
             if os.path.exists(f.STOP_FLAG):
                 print("\n[stop] stop requested — stopping between claims")
@@ -581,15 +584,17 @@ def main(limit: int, assume_yes: bool):
             if not cand:
                 if goto_next_page(page):                 # this page is all walked past -> next page
                     continue
-                open_list(page)
-                cand = [r for r in list_rows(page) if r["status"].lower() == "submitted" and r["claim"]
-                        and r["claim"] not in seen and fails.get(r["claim"], 0) < MAX_ROW_FAILS]
+                for attempt in range(2):                 # two fresh looks before "the list is empty"
+                    open_list(page)
+                    cand = [r for r in list_rows(page) if r["status"].lower() == "submitted" and r["claim"]
+                            and r["claim"] not in seen and fails.get(r["claim"], 0) < MAX_ROW_FAILS]
+                    if cand:
+                        break
+                    page.wait_for_timeout(2000)
                 if not cand:
                     break
             row = cand[0]
-            mine = ours.get(row["claim"])
-            if not mine and OTHERS and intsub_of.get(row["acct"], 0) > 0:
-                mine = {"acct": row["acct"], "is": None, "intsub": intsub_of[row["acct"]], "other": True}
+            mine = ours.get(row["claim"]) or {"acct": row["acct"], "is": None, "any": True}
             if not mine:                                 # not filed by our IS regular claim script
                 seen.add(row["claim"])
                 skipped += 1
