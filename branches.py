@@ -1008,12 +1008,48 @@ def reset_additional(csv_path, reasons: list[str]) -> dict:
     return {"reset": dict(done), "total": sum(done.values())}
 
 
+# IS claim / PRI lists: a claim may already exist on the portal for these -> never filed again by a reset
+CLAIM_NOT_RESETTABLE = {"CLAIM_CHECK_PORTAL", "MISMATCH", "WRONG_CLAIM", "NO_INT_SUB_AMT"}   # (Int Sub 0: fix the file, Rebuild)
+
+
+def reset_claim_list(csv_path, reasons: list[str]) -> dict:
+    """IS claim (IS regular claims) and PRI work lists: rows whose reason is in `reasons` -> RETRY appended to
+    the records file the job reads (IS claim: the branch's <SOL>_claims.csv; PRI: <stem>_claims.csv, per loan)."""
+    csv_path = Path(csv_path)
+    now = datetime.now()
+    if is_isclaim_list(csv_path):
+        import fasalrin_claim as fc
+        reasons_all, rows = ISCLAIM_REASONS, _isclaim_rows(csv_path)
+        rec_path, header = Path(f"{claim_records_base(csv_path)}_claims.csv"), fc.CLAIMS_HEADER
+    else:
+        import fasalrin_pri as pri
+        reasons_all, rows = PRI_REASONS, _pri_rows(csv_path)
+        rec_path, header = csv_path.with_name(csv_path.stem + "_claims.csv"), pri.HEADER
+    want = [k for k in reasons if k in {r[0] for r in reasons_all} and k not in CLAIM_NOT_RESETTABLE]
+    if not want:
+        raise ValueError("tick at least one reason that can be reset (not 'Check on portal' / 'Mismatch')")
+    done, recs = collections.Counter(), []
+    for r in rows:
+        k = reason_of(r.get(f.COL_STATUS) or "", reasons_all)
+        if k not in want:
+            continue
+        recs.append({"Time": now.strftime("%Y-%m-%d %H:%M:%S"), f.COL_ACCT: (r.get(f.COL_ACCT) or "").strip(),
+                     "Disb. Date": (r.get("Disb. Date") or "").strip(), "Result": f.RETRY_STATUS,
+                     f.COL_DETAIL: f"reset to retry {now:%d-%m-%Y %H:%M} (was {r.get(f.COL_STATUS)})"})
+        done[k] += 1
+    if recs:
+        _append_records(rec_path, header, recs)
+    return {"reset": dict(done), "total": sum(done.values())}
+
+
 def reset_hand_work(csv_path, reasons: list[str]) -> dict:
     """IS regular work list: rows whose hand-work reason is in `reasons` -> Status RETRY (work list + progress
     file), so the next entry run tries them again. Returns {reason: rows reset}."""
     csv_path = Path(csv_path)
     if scheme_of(csv_path) == "additional":
         return reset_additional(csv_path, reasons)
+    if scheme_of(csv_path) in ("isclaim", "pri", "prireg"):
+        return reset_claim_list(csv_path, reasons)
     if scheme_of(csv_path) == "fresh":
         return reset_fresh(csv_path, reasons)
     if scheme_of(csv_path) != "regular":

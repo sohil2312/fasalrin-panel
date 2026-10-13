@@ -1264,9 +1264,9 @@ function render(s) {
   }
   stats($("sumStats"), Object.entries(sm.status || {}).map(([k, v]) => [label(k), v]));
   const rs = sm.reasons || [];
-  const canReset = !!s.csv && ["regular", "fresh", "additional"].includes(listScheme(s.csv));
-  const NO_RESET = listScheme(s.csv) === "additional"      // a claim may exist on the portal: never filed again
-    ? ["CLAIM_CHECK_PORTAL", "MISMATCH", "WRONG_CLAIM"] : ["OTHER_BRANCH", "ERROR"];
+  const canReset = !!s.csv && ["regular", "fresh", "additional", "isclaim", "pri", "prireg"].includes(listScheme(s.csv));
+  const NO_RESET = ["additional", "isclaim", "pri", "prireg"].includes(listScheme(s.csv))   // a claim may exist on the portal
+    ? ["CLAIM_CHECK_PORTAL", "MISMATCH", "WRONG_CLAIM", "NO_INT_SUB_AMT"] : ["OTHER_BRANCH", "ERROR"];
   const ticked = new Set([...document.querySelectorAll('input[name="resetReason"]:checked')].map(x => x.value));
   $("resetHead").textContent = canReset ? "Retry" : "";
   $("reasons").innerHTML = rs.length ? rs.map(r => `<tr><td>${canReset && !NO_RESET.includes(r.reason)
