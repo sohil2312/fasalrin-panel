@@ -61,6 +61,7 @@ import csv
 import io
 import os
 import re
+import sys
 import time
 from datetime import date
 from pathlib import Path
@@ -93,6 +94,10 @@ MAX_ITER    = 0                      # safety: max rows walked in one run (incl.
 STUCK_TIMEOUT_S = 60                 # <<< seconds a screen may take to respond before it counts as stuck
 STUCK_RETRIES = 2                    # screen stuck (a wait timed out) -> reload + dashboard + retry the row this many times
 HEADLESS    = False
+# browser window: maximized on Windows. macOS ignores --start-maximized and opens a small window, so the
+# portal pages scroll up and down for every button: there the window is sized to the screen (macOS clamps it)
+BROWSER_ARGS = ["--start-maximized"] + (["--window-position=0,0", "--window-size=1920,1200"]
+                                        if sys.platform == "darwin" else [])
 PROFILE_DIR = ".pw_profile"
 SLOWMO_MS   = 30
 NO_PROMPT   = os.environ.get("NO_PROMPT") == "1"   # 1 = never wait for ENTER; poll for login instead
@@ -1248,7 +1253,7 @@ def main():
     with sync_playwright() as p:
         ctx = p.chromium.launch_persistent_context(
             PROFILE_DIR, headless=HEADLESS, slow_mo=SLOWMO_MS,
-            viewport=None, args=["--start-maximized"],
+            viewport=None, args=BROWSER_ARGS,
         )
         ctx.set_default_timeout(STUCK_TIMEOUT_S * 1000)
         page = ctx.pages[0] if ctx.pages else ctx.new_page()
