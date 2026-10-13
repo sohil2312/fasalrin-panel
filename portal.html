@@ -255,6 +255,7 @@
   /* scheme switch = the bottom bar: plain labels, a yellow highlighter swipe behind the active one */
   .tabs { background: var(--card); border: var(--bw) solid var(--edge); border-radius: 999px; box-shadow: var(--sh-sm);
           padding: 6px 10px; gap: 6px; }
+  .tab[hidden] { display: none !important; }
   .tab { position: relative; z-index: 0; border: 0; border-radius: 999px; background: none; color: var(--ink);
          text-transform: none; letter-spacing: 0; padding: 8px 18px 6px; font-weight: 700; }
   .tab small { color: var(--muted); font-weight: 400; }
@@ -514,7 +515,10 @@
     </div>
     <!-- one switch for the whole dashboard: each tab shows only its own master, lists, jobs and totals -->
     <nav class="tabs" role="tablist" aria-label="Scheme">
-      <button role="tab" class="tab" data-tab="regular" aria-selected="true"
+      <button role="tab" class="tab" data-tab="isclaim" aria-selected="true"
+        title="1.5% IS claims on 2025-26 loans, from the IS regular claim file">IS claim</button>
+      <!-- hidden for now (still working: remove 'hidden' to bring them back) -->
+      <button role="tab" class="tab" data-tab="regular" aria-selected="false" hidden
         title="2025-26 loans · entry, approval, IS claims">IS regular</button>
       <button role="tab" class="tab" data-tab="additional" aria-selected="false"
         title="Rollover claims for 2024-25 loans">IS additional</button>
@@ -522,10 +526,8 @@
         title="3% PRI claims for 2024-25 loans">PRI additional</button>
       <button role="tab" class="tab" data-tab="prireg" aria-selected="false"
         title="3% PRI claims for 2025-26 loans">PRI regular</button>
-      <button role="tab" class="tab" data-tab="fresh" aria-selected="false"
+      <button role="tab" class="tab" data-tab="fresh" aria-selected="false" hidden
         title="New farmers not in the portal: full application from scratch">IS fresh</button>
-      <button role="tab" class="tab" data-tab="isclaim" aria-selected="false"
-        title="1.5% IS claims on 2025-26 loans, from the IS regular claim file">IS claim</button>
     </nav>
     <span id="pill" class="pill" role="status" aria-live="polite">idle</span>
   </header>
@@ -988,7 +990,8 @@ function mtype() { return scheme(); }              // the master card follows th
 
 // ---- the IS regular | IS additional tabs switch the whole dashboard ----
 function setTab(t, save = true) {
-  if (!["regular", "additional", "pri", "prireg", "fresh", "isclaim"].includes(t)) t = "regular";
+  const shown = [...document.querySelectorAll(".tab")].filter(b => !b.hidden).map(b => b.dataset.tab);
+  if (!shown.includes(t)) t = shown[0] || "isclaim";      // a hidden tab (IS regular / IS fresh) opens IS claim
   document.querySelectorAll(".tab").forEach(b => b.setAttribute("aria-selected", String(b.dataset.tab === t)));
   document.querySelector(`input[name="scheme"][value="${t}"]`).checked = true;
   document.querySelector(`input[name="mtype"][value="${t}"]`).checked = true;
@@ -1189,8 +1192,8 @@ $("mUpBtn").onclick = async () => {
   $("mFile").value = ""; $("mUpBtn").disabled = true; masterChoice = r.master; loadMasters();
   if (mtype() === "additional") openMap(r.master);   // always confirm the columns of a new IS additional file
 };
-let savedTab = "regular";
-try { savedTab = localStorage.getItem("fasalrinTab") || "regular"; } catch (e) {}
+let savedTab = "isclaim";
+try { savedTab = localStorage.getItem("fasalrinTab") || "isclaim"; } catch (e) {}
 setTab(savedTab, false);
 
 $("stopBtn").onclick = () => post("/api/stop", {force: false}).then(poll);
