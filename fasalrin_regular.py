@@ -827,39 +827,63 @@ def fill_amount(page, locator, value):
 
 
 def pick_calendar_date(page, date_input, target: date):
-    """Open the rmdp picker attached to `date_input` and click `target`."""
-    date_input.click()
-    page.wait_for_selector(".rmdp-header-values", timeout=8000)
-    tgt = (target.year, target.month)
-    for _ in range(30):
-        hdr = page.locator(".rmdp-header-values").first.inner_text()
-        m = re.search(r"([A-Za-z]+)\D+(\d{4})", hdr)
-        if not m:
-            raise RuntimeError(f"unreadable calendar header: {hdr!r}")
-        cur = (int(m.group(2)), MONTHS.index(m.group(1)) + 1)
-        if cur == tgt:
-            break
-        arrow = ".rmdp-right" if cur < tgt else ".rmdp-left"
-        page.locator(f".rmdp-arrow-container{arrow}").first.click()
-        page.wait_for_timeout(120)
-    else:
-        raise RuntimeError(f"could not reach {target:%m/%Y} in calendar")
-    ok = page.evaluate(
-        """(day) => {
-            for (const d of document.querySelectorAll('.rmdp-day')) {
-              const sp = d.querySelector('span');
-              if (!sp || sp.textContent.trim() !== String(day)) continue;
-              if (d.classList.contains('rmdp-day-hidden')) continue;
-              if (d.classList.contains('rmdp-disabled')) return 'disabled';
-              sp.click();
-              return 'ok';
-            }
-            return 'notfound';
-        }""", target.day)
-    if ok != "ok":
-        raise RuntimeError(f"date {target:%d/%m/%Y} not selectable ({ok})")
+    """Open the rmdp picker attached to `date_input` and click `target`. Only the calendar that is OPEN (visible)
+    is read and clicked, and after each month arrow the header must really change before it is read again
+    (a slow redraw used to make the picker overshoot and flip months back and forth)."""
     want = f"{target:%d/%m/%Y}"
-    wait_for(page, lambda: date_input.input_value().strip() == want, 5, f"date {want} to register")
+    hdr_loc = page.locator(".rmdp-header-values >> visible=true")
+    def header():
+        try:
+            return hdr_loc.first.inner_text().strip() if hdr_loc.count() else ""
+        except Exception:
+            return ""
+    for attempt in range(2):
+        if not hdr_loc.count():
+            date_input.click()
+        wait_for(page, lambda: header(), 8, "calendar to open")
+        tgt = (target.year, target.month)
+        for _ in range(40):
+            hdr = header()
+            m = re.search(r"([A-Za-z]+)\D+(\d{4})", hdr)
+            if not m or m.group(1) not in MONTHS:
+                raise RuntimeError(f"unreadable calendar header: {hdr!r}")
+            cur = (int(m.group(2)), MONTHS.index(m.group(1)) + 1)
+            if cur == tgt:
+                break
+            arrow = ".rmdp-right" if cur < tgt else ".rmdp-left"
+            page.locator(f".rmdp-arrow-container{arrow} >> visible=true").first.click()
+            try:                                     # the month must change before it is read again
+                wait_for(page, lambda: header() and header() != hdr, 3, "calendar month to change")
+            except StuckError:
+                pass
+        else:
+            raise RuntimeError(f"could not reach {target:%m/%Y} in calendar")
+        ok = page.evaluate(
+            """(day) => {
+                const vis = e => e.getClientRects().length > 0 && getComputedStyle(e).visibility !== 'hidden';
+                for (const d of document.querySelectorAll('.rmdp-day-picker .rmdp-day, .rmdp-day')) {
+                  if (!vis(d)) continue;                       // only the calendar that is open
+                  const sp = d.querySelector('span');
+                  if (!sp || sp.textContent.trim() !== String(day)) continue;
+                  if (d.classList.contains('rmdp-day-hidden') || d.classList.contains('rmdp-deactive')) continue;
+                  if (d.classList.contains('rmdp-disabled')) return 'disabled';
+                  sp.click();
+                  return 'ok';
+                }
+                return 'notfound';
+            }""", target.day)
+        if ok != "ok":
+            raise RuntimeError(f"date {want} not selectable ({ok})")
+        try:
+            wait_for(page, lambda: date_input.input_value().strip() == want, 5, f"date {want} to register")
+            return
+        except StuckError:
+            if attempt:                              # still another date after a second try: stop, never guess
+                raise RuntimeError(f"date field shows {date_input.input_value()!r}, want {want}")
+            try:
+                page.keyboard.press("Escape")
+            except Exception:
+                pass
 
 
 PRIMARY_ACTIVITY_DEFAULT = "Agri Crops"   # picked when the portal leaves Primary Activity blank
