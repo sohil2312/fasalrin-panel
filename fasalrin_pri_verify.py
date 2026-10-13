@@ -172,7 +172,7 @@ def main(limit: int, assume_yes: bool):
     sol = Path(f.INPUT_CSV).parent.parent.name
     print(f"[pri] {RECORDS_CSV}: {len(ours)} PRI claims filed by our job (only these, after checks, get approved)")
     with sync_playwright() as p:
-        ctx = p.chromium.launch_persistent_context(PROFILE_DIR, headless=f.HEADLESS, slow_mo=f.SLOWMO_MS,
+        ctx = p.chromium.launch_persistent_context(f.profile(PROFILE_DIR), headless=f.HEADLESS, slow_mo=f.SLOWMO_MS,
                                                    viewport=None, args=f.BROWSER_ARGS)
         ctx.set_default_timeout(f.STUCK_TIMEOUT_S * 1000)
         f.zoom_out(ctx)

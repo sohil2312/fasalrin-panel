@@ -954,7 +954,7 @@ def run(csv_path: Path):
           f"{len(todo)} to do" + ("" if area_col else "  (no LAND AREA column yet: crop rows become NO_LAND)"))
 
     with sync_playwright() as p:
-        ctx = p.chromium.launch_persistent_context(f.PROFILE_DIR, headless=False, slow_mo=0,
+        ctx = p.chromium.launch_persistent_context(f.profile(f.PROFILE_DIR), headless=False, slow_mo=0,
                                                    viewport=None, args=f.BROWSER_ARGS)
         ctx.set_default_timeout(f.STUCK_TIMEOUT_S * 1000)
         f.zoom_out(ctx)

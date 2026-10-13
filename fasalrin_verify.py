@@ -295,7 +295,7 @@ def main(limit: int, assume_yes: bool):
         print(f"[approvals] {files[-1].name}: {seen} approvals made outside this script recorded")
 
     with sync_playwright() as p:
-        ctx = p.chromium.launch_persistent_context(PROFILE_DIR, headless=f.HEADLESS, slow_mo=0,
+        ctx = p.chromium.launch_persistent_context(f.profile(PROFILE_DIR), headless=f.HEADLESS, slow_mo=0,
                                                    viewport=None, args=f.BROWSER_ARGS)
         ctx.set_default_timeout(f.STUCK_TIMEOUT_S * 1000)
         f.zoom_out(ctx)

@@ -258,9 +258,6 @@
   .tab[hidden] { display: none !important; }
   .anaPick { display: grid; grid-template-columns: 1fr 1fr auto; gap: 12px; align-items: end; }
   .anaPick select { width: 100%; margin-top: 4px; }
-  .anaVenn { display: flex; gap: 18px; flex-wrap: wrap; margin-top: 12px; }
-  .anaVenn svg { width: 300px; max-width: 100%; height: auto; }
-  .anaVenn text { fill: var(--ink); font-family: inherit; }
   @media (max-width: 760px) { .anaPick { grid-template-columns: 1fr; } }
   .tab { position: relative; z-index: 0; border: 0; border-radius: 999px; background: none; color: var(--ink);
          text-transform: none; letter-spacing: 0; padding: 8px 18px 6px; font-weight: 700; }
@@ -635,7 +632,6 @@
         </div>
         <div class="muted" id="anaMsg">Upload the approved IS claims report and the portal's pending report above, pick them here, then Analyse.</div>
         <div class="stats anaCards" id="anaCards" style="margin-top:10px"></div>
-        <div class="anaVenn" id="anaVenn"></div>
         <div class="row" id="anaGo" style="display:none">
           <button class="primary" id="anaClaim">Claim these</button>
           <button id="anaClear">Clear claim list</button>
@@ -1293,43 +1289,31 @@ function render(s) {
 // ---- IS additional report analysis ----
 let anaFor = null;
 function fillAna(c, reports) {
-  const on = ["additional", "isclaim"].includes(listScheme(c));
+  const sc = listScheme(c), on = ["additional", "isclaim", "pri", "prireg"].includes(sc);
   $("anaBox").style.display = on ? "" : "none";
   if (!on) return;
-  const reg = listScheme(c) === "isclaim";
-  $("anaApprHelp").textContent = reg
-    ? "Portal IS Claim Application report, status Approved — rows with Is Rollover NO (2025-26 loans) are IS regular"
+  const reg = sc === "isclaim", isPri = sc === "pri" || sc === "prireg", pfy = sc === "prireg" ? "2025-2026" : "2024-2025";
+  $("anaApprHelp").textContent = isPri
+    ? `Portal PRI Claim Application report, status Approved — Claim Type PRI, loan FY ${pfy}`
+    : reg ? "Portal IS Claim Application report, status Approved — rows with Is Rollover NO (2025-26 loans) are IS regular"
     : "Portal IS Claim Application report, status Approved — rows with Is Rollover YES are IS additional";
-  $("anaPendHelp").textContent = reg
-    ? "Portal list of 2025-26 loans still waiting for their IS claim (optional)"
+  $("anaPendHelp").textContent = isPri
+    ? `Portal report of the loans still waiting for their PRI claim (loan FY ${pfy}) (optional)`
+    : reg ? "Portal list of 2025-26 loans still waiting for their IS claim (optional)"
     : "Portal rollover pending report — its 2024-25 loans (Is Rollover NO) are the rollovers still to claim (optional)";
   const opt = (r, pick) => `<option value="${esc(r.name)}"${pick ? " selected" : ""}>${esc(r.name)} · ${r.rows} rows · ${esc(r.time)}</option>`;
   // approved: an IS claim report; pending: a rollover pending report (claim format) or a loan-format list
-  const appr = reports.filter(r => r.kind === "claim IS"), pend = reports.filter(r => r.kind === "claim IS" || r.kind === "loan");
+  const wantAppr = isPri ? "claim PRI" : "claim IS";
+  const appr = reports.filter(r => r.kind === wantAppr), pend = reports.filter(r => ["claim IS", "claim PRI", "loan"].includes(r.kind));
   $("anaAppr").innerHTML = appr.length ? appr.map((r, i) => opt(r, i === 0)).join("")
-    : '<option value="">— upload the approved IS claims report —</option>';
+    : `<option value="">— upload the approved ${isPri ? "PRI" : "IS"} claims report —</option>`;
   $("anaPend").innerHTML = '<option value="">— no pending report —</option>' + pend.map(r => opt(r, false)).join("");
   $("anaBtn").disabled = !appr.length;
-  if (anaFor !== c) { anaFor = c; $("anaCards").innerHTML = ""; $("anaVenn").innerHTML = ""; $("anaGo").style.display = "none"; }
+  if (anaFor !== c) { anaFor = c; $("anaCards").innerHTML = ""; $("anaGo").style.display = "none"; }
 }
 function anaCard(title, value, file, note) {
   const link = file ? `<a href="/download_analysis?csv=${encodeURIComponent(anaFor)}&file=${encodeURIComponent(file)}">↓ list</a>` : "";
   return `<div class="stat"><b>${esc(value)}</b><span>${esc(title)}</span>${note ? `<small class="muted">${esc(note)}</small>` : ""}${link}</div>`;
-}
-// small Venn diagram: two sets, the counts only in A, in both, only in B (circles not to scale)
-function venn(title, aName, bName, aOnly, both, bOnly, note) {
-  const n = v => esc(String(v ?? 0));
-  return `<svg viewBox="0 0 300 182" role="img" aria-label="${esc(title)}: ${esc(aName)} only ${n(aOnly)}, both ${n(both)}, ${esc(bName)} only ${n(bOnly)}">
-    <text x="150" y="16" text-anchor="middle" font-size="13" font-weight="700">${esc(title)}</text>
-    <circle cx="112" cy="90" r="62" fill="var(--info-soft)" fill-opacity=".85" stroke="var(--edge)" stroke-width="2"/>
-    <circle cx="188" cy="90" r="62" fill="var(--good-soft)" fill-opacity=".7" stroke="var(--edge)" stroke-width="2"/>
-    <text x="80" y="96" text-anchor="middle" font-size="17" font-weight="800">${n(aOnly)}</text>
-    <text x="150" y="96" text-anchor="middle" font-size="17" font-weight="800">${n(both)}</text>
-    <text x="220" y="96" text-anchor="middle" font-size="17" font-weight="800">${n(bOnly)}</text>
-    <text x="150" y="112" text-anchor="middle" font-size="10">${esc(note)}</text>
-    <text x="96" y="172" text-anchor="middle" font-size="11" font-weight="600">${esc(aName)}</text>
-    <text x="204" y="172" text-anchor="middle" font-size="11" font-weight="600">${esc(bName)}</text>
-  </svg>`;
 }
 function showQueue(q) {
   $("anaQueue").textContent = q && q.accounts != null
@@ -1343,30 +1327,25 @@ $("anaBtn").onclick = async () => {
   const fl = r.files || {}, fy = Object.entries(r.pending_loan_fy || {}).map(([k, v]) => `${v} loans of ${k}`).join(", ");
   $("anaMsg").className = "";
   $("anaMsg").innerHTML = `Approved: <b>${esc(r.approved_report)}</b>` + (r.pending_report ? ` · Pending: <b>${esc(r.pending_report)}</b>` : " · no pending report");
-  const roll = r.rollover, other = roll === "YES" ? "NO (IS regular)" : "YES (IS additional)";
+  const roll = r.rollover, other = r.other_label || (roll === "YES" ? "NO (IS regular)" : "YES (IS additional)");
+  const ap = r.approved_label || `Rollover ${roll} approved`, amt = r.approved_label ? "3% PRI" : "Int Sub Amt";
   let cards = [
-    anaCard("In master (Int Sub Amt > 0)", r.master),
-    anaCard("Approved claims in report", r.approved_rows, "", `${r.approved_yes} rollover ${roll} · ${r.approved_other} ${other}`),
-    anaCard(`Rollover ${roll} approved`, r.approved_yes),
-    anaCard(`Rollover ${roll} matched with master`, r.yes_matched, fl.approved_matched),
-    anaCard(`Rollover ${roll} not in master`, r.yes_not_in_master, fl.approved_not_in_master),
+    anaCard(`In master (${amt} > 0)`, r.master),
+    anaCard("Approved claims in report", r.approved_rows, "", `${r.approved_yes} ${r.approved_label ? "PRI of this loan year" : "rollover " + roll} · ${r.approved_other} ${other}`),
+    anaCard(ap, r.approved_yes),
+    anaCard(`${ap} · matched with master`, r.yes_matched, fl.approved_matched),
+    anaCard(`${ap} · not in master`, r.yes_not_in_master, fl.approved_not_in_master),
     anaCard("Left in master (not approved)", r.left, fl.left)];
   if (r.pending_report) cards = cards.concat([
     anaCard("Pending report rows", r.pending_rows, "", r.pending_used !== r.pending_rows
-      ? `${r.pending_used} used: 2024-25 loans (Is Rollover NO)` : fy),
+      ? `${r.pending_used} used: ${r.approved_label ? "loans of this loan year" : "2024-25 loans (Is Rollover NO)"}` : fy),
     anaCard("To claim: left in master + pending", r.final, fl.final),
     anaCard("Pending, already approved", r.pending_approved, fl.pending_approved),
     anaCard("Pending, other loan of the farmer", r.pending_other_loan, fl.pending_other_loan, "loan date not the master's Disb. Date"),
     anaCard("Pending, not in master", r.pending_not_in_master, fl.pending_not_in_master),
-    anaCard("Pending, Int Sub Amt 0 in master", r.pending_zero, fl.pending_zero, "nothing to claim"),
+    anaCard(`Pending, ${amt} 0 in master`, r.pending_zero, fl.pending_zero, "nothing to claim"),
     anaCard("Left in master, not pending", r.left_not_pending, fl.left_not_pending)]);
   $("anaCards").innerHTML = cards.join("");
-  let vs = venn("Master vs approved report", `Master ${r.master}`, `Approved ${roll} ${r.approved_yes}`,
-                r.left, r.yes_matched, r.yes_not_in_master, "approved");
-  if (r.pending_report)
-    vs += venn("Left in master vs pending report", `Left in master ${r.left}`, `Pending used ${r.pending_used}`,
-               r.left_not_pending, r.final, Math.max(0, (r.pending_used || 0) - (r.final || 0)), "to claim");
-  $("anaVenn").innerHTML = vs;
   if (r.scheme === "additional" && r.pending_report && r.pending_loan_fy && !r.pending_loan_fy["2024-25"] && r.pending_used)
     $("anaMsg").insertAdjacentHTML("beforeend", ` <span class="err">· The pending report has no 2024-25 loans (${esc(fy)}): it is the IS regular pending list. For IS additional take the portal's pending list with FY 2024-2025.</span>`);
   $("anaGo").style.display = r.pending_report ? "" : "none";

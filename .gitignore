@@ -36,3 +36,7 @@ dist/
 
 # run-time learning files (portal data layout), never published
 logs/
+
+# extra dashboards (other ports): their stop flags, job markers
+stop_*.flag
+.running/

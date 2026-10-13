@@ -80,7 +80,15 @@ RETRY_REVERIFY = False               # --retry-reverify: AADHAAR_REVERIFY rows n
 ONLY_REVERIFY = False                # --only-reverify: this run does only those rows (new rows wait)
 REVERIFY_RETRY_DETAIL = "Aadhaar reverify: retried once"
 REVERIFY_RETRIED = "(retried once)"  # added to Detail when the retry hits AADHAAR_REVERIFY again: never again
-STOP_FLAG   = "stop.flag"            # file created by the control panel -> stop between rows
+# a second (third ...) dashboard on another port runs its jobs with FASALRIN_INSTANCE=<port>: own stop flag
+# and own browser profiles (Chromium cannot open one profile twice), so branches run side by side
+INSTANCE    = os.environ.get("FASALRIN_INSTANCE", "").strip()
+STOP_FLAG   = f"stop_{INSTANCE}.flag" if INSTANCE else "stop.flag"   # created by the control panel -> stop between rows
+
+
+def profile(path: str) -> str:
+    """The browser profile folder of this dashboard (the main one keeps the original folders and logins)."""
+    return f"{path}_{INSTANCE}" if INSTANCE else path
 REPORTS_DIR = Path("reports")        # portal reports (farmer PII: local only, gitignored)
 REPORT_TIMEOUT_S = 120               # wait this long for a fresh report, then use the newest saved one
 REPORT_REFRESH_H = 2                 # "yes" -> download again every this many hours during the run
@@ -1446,7 +1454,7 @@ def main():
 
     with sync_playwright() as p:
         ctx = p.chromium.launch_persistent_context(
-            PROFILE_DIR, headless=HEADLESS, slow_mo=SLOWMO_MS,
+            profile(PROFILE_DIR), headless=HEADLESS, slow_mo=SLOWMO_MS,
             viewport=None, args=BROWSER_ARGS,
         )
         ctx.set_default_timeout(STUCK_TIMEOUT_S * 1000)

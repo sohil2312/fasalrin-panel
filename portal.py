@@ -30,7 +30,50 @@ import branches
 ROOT = Path(__file__).resolve().parent
 HOST = "127.0.0.1"
 PORT = int(os.environ.get("FASALRIN_PORT") or 8765)   # the portable zip uses its own port (Start Fasalrin.bat)
-STOP_FLAG = ROOT / "stop.flag"
+# extra dashboards (another port: FASALRIN_PORT=8767 ...) keep their own stop flag, job logs and browser
+# profiles, so different branches run side by side; one branch never runs on two dashboards at once
+INSTANCE = "" if PORT in (8765, 8766) else str(PORT)     # 8766 = the portable zip's main dashboard
+STOP_FLAG = ROOT / (f"stop_{INSTANCE}.flag" if INSTANCE else "stop.flag")
+RUNNING_DIR = ROOT / ".running"                     # <port>.txt = the work list a dashboard's job runs on
+
+
+def log_name(name: str) -> str:
+    return f"{Path(name).stem}_{INSTANCE}.log" if INSTANCE else name
+
+
+def sol_dir_of(csv_name: str) -> str:
+    """branches/<SOL> of a work list (any scheme), '' for loose CSVs."""
+    parts = Path(csv_name).parts
+    return "/".join(parts[:2]) if len(parts) > 2 and parts[0] == "branches" else ""
+
+
+def _pid_alive(pid: int) -> bool:
+    if os.name == "nt":                               # (os.kill(pid, 0) would END the process on Windows)
+        r = subprocess.run(["tasklist", "/FI", f"PID eq {pid}", "/NH"], capture_output=True, text=True)
+        return str(pid) in r.stdout
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+
+def busy_elsewhere(csv_name: str) -> str:
+    """The port of another dashboard whose running job is on the same branch, '' if none."""
+    me, sd = str(PORT), sol_dir_of(csv_name)
+    for p in RUNNING_DIR.glob("*.txt") if RUNNING_DIR.exists() else []:
+        if p.stem == me:
+            continue
+        try:
+            pid_s, other = p.read_text(encoding="utf-8").split("\n", 1)
+        except (OSError, ValueError):
+            continue
+        if not _pid_alive(int(pid_s)):
+            p.unlink(missing_ok=True)                  # that job has ended
+            continue
+        if other.strip() == csv_name or (sd and sol_dir_of(other.strip()) == sd):
+            return p.stem
+    return ""
 JOBS = {
     "entry":   {"script": "fasalrin_regular.py", "log": "run.log",    "login": "Branch User"},
     "approve": {"script": "fasalrin_verify.py",  "log": "verify.log", "login": "Branch Head"},
@@ -221,11 +264,15 @@ def start_job(kind: str, csv_name: str, answer: str, limit: int = 0, retry_rever
     want, got = JOB_SCHEME.get(kind, "regular"), branches.scheme_of(ROOT / csv_name)
     if want != got:                                   # never run a job on another scheme's work list
         return f"this job needs an {SCHEME_NAME[want]} work list (picked: {SCHEME_NAME[got]})"
+    other = busy_elsewhere(csv_name)
+    if other:
+        return (f"this branch has a job running on the dashboard at localhost:{other}: "
+                f"run another branch here, or wait for that job")
     with lock:
         if running():
             return "a job is already running"
         STOP_FLAG.unlink(missing_ok=True)
-        spec = JOBS[kind]
+        spec = dict(JOBS[kind], log=log_name(JOBS[kind]["log"]))
         args = [sys.executable, "-u", "-W", "ignore", spec["script"], csv_name]
         if kind != "entry":
             args += ["--yes"]                     # approval / claim jobs: confirmed in the panel
@@ -235,7 +282,7 @@ def start_job(kind: str, csv_name: str, answer: str, limit: int = 0, retry_rever
             args += ["--retry-reverify"]          # Aadhaar-reverify rows not retried before: once more
         if kind != "entry" and limit > 0:
             args += ["--limit", str(limit)]
-        env = dict(os.environ, NO_PROMPT="1", PYTHONIOENCODING="utf-8")
+        env = dict(os.environ, NO_PROMPT="1", PYTHONIOENCODING="utf-8", FASALRIN_INSTANCE=INSTANCE)
         if (ROOT / spec["log"]).exists():          # the previous run's log stays readable
             os.replace(ROOT / spec["log"], ROOT / (Path(spec["log"]).stem + ".prev.log"))
         log = open(ROOT / spec["log"], "w", encoding="utf-8")
@@ -246,6 +293,11 @@ def start_job(kind: str, csv_name: str, answer: str, limit: int = 0, retry_rever
         job.clear()
         job.update(kind=kind, csv=csv_name, proc=proc, log=ROOT / spec["log"], logfh=log,
                    started=time.time(), ended=None, stop_requested=False, forced=False)
+        try:                                         # other dashboards see which branch is busy here
+            RUNNING_DIR.mkdir(exist_ok=True)
+            (RUNNING_DIR / f"{PORT}.txt").write_text(f"{proc.pid}\n{csv_name}", encoding="utf-8")
+        except OSError:
+            pass
     return None
 
 
@@ -674,7 +726,8 @@ class Handler(BaseHTTPRequestHandler):
                 try:                                  # what Match would do, before anything is written
                     with lock:
                         info = branches.report_info(branches.reports_dir(ROOT / name) / saved)
-                        pending = branches.is_analysis_list(ROOT / name) and info["kind"] == "loan"
+                        pending = (branches.is_analysis_list(ROOT / name)        # a pending report: no Match preview
+                                   and info["kind"] != branches.wants_kind(ROOT / name))
                         preview = None if pending else branches.match_report(ROOT / name, saved, dry_run=True)
                 except (ValueError, KeyError, OSError) as e:
                     return self._send(400, {"error": str(e)[:240]})
@@ -683,7 +736,8 @@ class Handler(BaseHTTPRequestHandler):
             if running() and job.get("csv") == name:
                 return self._send(400, {"error": "a job is running on this work list: stop it first, then match"})
             rp = branches.reports_dir(ROOT / name) / os.path.basename(body.get("report", ""))
-            if branches.is_analysis_list(ROOT / name) and rp.exists() and branches.report_info(rp)["kind"] == "loan":
+            if (branches.is_analysis_list(ROOT / name) and rp.exists()
+                    and branches.report_info(rp)["kind"] != branches.wants_kind(ROOT / name)):
                 return self._send(400, {"error": "this is the pending report: use it in Report analysis below"})
             try:
                 with lock:

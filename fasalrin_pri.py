@@ -408,11 +408,18 @@ def main(limit: int, assume_yes: bool, only: str = ""):
     sol = Path(f.INPUT_CSV).parent.parent.name
     recs = load_records()
     held = [k for k, r in recs.items() if r.startswith("CLAIM_CHECK_PORTAL")]
+    queue = None                                 # report analysis "Claim these": only those loans
+    qp = os.path.splitext(f.OUTPUT_CSV)[0] + "_queue.csv"
+    if os.path.exists(qp) and not only:
+        with open(qp, newline="", encoding="utf-8-sig") as fh:
+            queue = {key((e.get(f.COL_ACCT) or "").strip(), (e.get(COL_DISB) or "").strip()) for e in csv.DictReader(fh)}
+        print(f"[queue] {len(queue)} loans from the report analysis (left in the master AND pending on the portal)")
     todo, bad = [], []
     for r in rows[1:]:
         acct, disb_s = r[idx[f.COL_ACCT]].strip(), r[idx[COL_DISB]].strip()
         st = recs.get(key(acct, disb_s), "")
-        if (not acct or (only and acct != only) or money_to_float(r[idx[COL_PRI]]) <= 0 or st in DONE
+        if (not acct or (only and acct != only) or (queue is not None and key(acct, disb_s) not in queue)
+                or money_to_float(r[idx[COL_PRI]]) <= 0 or st in DONE
                 or st.startswith("CLAIM_CHECK_PORTAL")):
             continue
         disb, repay = dmy(disb_s), dmy(r[idx[COL_REPAY]])
@@ -428,7 +435,7 @@ def main(limit: int, assume_yes: bool, only: str = ""):
         print(f"[pri] {len(held)} CLAIM_CHECK_PORTAL -> NOT retried, check on the portal: {', '.join(held[:10])}")
 
     with sync_playwright() as p:
-        ctx = p.chromium.launch_persistent_context(PROFILE_DIR, headless=f.HEADLESS, slow_mo=f.SLOWMO_MS,
+        ctx = p.chromium.launch_persistent_context(f.profile(PROFILE_DIR), headless=f.HEADLESS, slow_mo=f.SLOWMO_MS,
                                                    viewport=None, args=f.BROWSER_ARGS)
         ctx.set_default_timeout(f.STUCK_TIMEOUT_S * 1000)
         f.zoom_out(ctx)
