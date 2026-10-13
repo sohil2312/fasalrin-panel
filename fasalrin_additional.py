@@ -512,10 +512,17 @@ def main(limit: int, assume_yes: bool, only: str = ""):
         raise SystemExit(f"work list needs the columns '{COL_INTSUB}', '{COL_DISB}', '{COL_REPAY}'")
     recs = load_records()
     held = [a for a, r in recs.items() if r.startswith("CLAIM_CHECK_PORTAL")]
+    queue = None                                 # report analysis "Claim these": only those accounts
+    qp = os.path.splitext(f.OUTPUT_CSV)[0] + "_queue.csv"
+    if os.path.exists(qp) and not only:
+        with open(qp, newline="", encoding="utf-8-sig") as fh:
+            queue = {(e.get(f.COL_ACCT) or "").strip() for e in csv.DictReader(fh)}
+        print(f"[queue] {len(queue)} accounts from the report analysis (left in the master AND pending on the portal)")
     todo, bad = [], []
     for r in rows[1:]:
         acct = r[a_i].strip()
-        if (not acct or (only and acct != only) or money_to_float(r[is_i]) <= 0 or recs.get(acct) in DONE
+        if (not acct or (only and acct != only) or (queue is not None and acct not in queue)
+                or money_to_float(r[is_i]) <= 0 or recs.get(acct) in DONE
                 or (recs.get(acct) or "").startswith("CLAIM_CHECK_PORTAL")):
             continue
         disb, repay = date_in(r[d_i]), date_in(r[r_i])

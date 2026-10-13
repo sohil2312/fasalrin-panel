@@ -485,7 +485,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(data)))
             self.end_headers()
             self.wfile.write(data)
-        elif self.path.startswith("/download"):
+        elif self.path.startswith("/download?"):
             from urllib.parse import unquote
             q = dict(x.split("=", 1) for x in self.path.partition("?")[2].split("&") if "=" in x)
             name = unquote(q.get("csv", ""))
@@ -497,6 +497,22 @@ class Handler(BaseHTTPRequestHandler):
             fname = f"{Path(name).stem}_hand_work.zip"
             self.send_response(200)
             self.send_header("Content-Type", "application/zip")
+            self.send_header("Content-Disposition", f'attachment; filename="{fname}"')
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+        elif self.path.startswith("/download_analysis"):     # one list of the IS additional report analysis
+            from urllib.parse import unquote
+            q = {k: unquote(v) for k, v in (x.split("=", 1) for x in self.path.partition("?")[2].split("&") if "=" in x)}
+            name, fname = q.get("csv", ""), os.path.basename(q.get("file", ""))
+            if name not in input_csvs() or not branches.is_additional_list(ROOT / name):
+                return self._send(404, {"error": "unknown list"})
+            p = branches.analysis_dir(ROOT / name) / fname
+            if not fname.startswith(Path(name).stem + "_") or not fname.endswith(".csv") or not p.exists():
+                return self._send(404, {"error": "press Analyse first"})
+            data = p.read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/csv; charset=utf-8")
             self.send_header("Content-Disposition", f'attachment; filename="{fname}"')
             self.send_header("Content-Length", str(len(data)))
             self.end_headers()
@@ -575,6 +591,26 @@ class Handler(BaseHTTPRequestHandler):
             except (ValueError, KeyError, csv.Error) as e:
                 return self._send(400, {"error": str(e)[:200]})
             return self._send(200, {"ok": True, **res})
+        if self.path in ("/api/add_analysis", "/api/add_claim_these", "/api/add_queue_clear"):
+            name = body.get("csv", "")
+            if name not in input_csvs() or not branches.is_additional_list(ROOT / name):
+                return self._send(400, {"error": "pick an IS additional work list"})
+            if self.path != "/api/add_analysis" and running() and job.get("csv") == name:
+                return self._send(400, {"error": "a job is running on this work list: stop it first"})
+            try:
+                with lock:
+                    if self.path == "/api/add_analysis":
+                        res = branches.analyse_additional(ROOT / name, body.get("approved", ""), body.get("pending", ""))
+                    elif self.path == "/api/add_claim_these":
+                        res = branches.apply_additional_analysis(ROOT / name)
+                    else:
+                        branches.clear_additional_queue(ROOT / name)
+                        res = {"queue": {}}
+            except PermissionError:
+                return self._send(400, {"error": "a list is open in Excel - close it and try again"})
+            except (ValueError, KeyError) as e:
+                return self._send(400, {"error": str(e)[:200]})
+            return self._send(200, {"ok": True, **res})
         if self.path == "/api/master_upload":
             kind = body.get("type") if body.get("type") in MASTER_KINDS else "regular"
             err, saved = save_master(body.get("name", ""), body.get("b64", ""), kind)
@@ -638,12 +674,17 @@ class Handler(BaseHTTPRequestHandler):
                 try:                                  # what Match would do, before anything is written
                     with lock:
                         info = branches.report_info(branches.reports_dir(ROOT / name) / saved)
-                        preview = branches.match_report(ROOT / name, saved, dry_run=True)
+                        pending = branches.is_additional_list(ROOT / name) and info["kind"] == "loan"
+                        preview = None if pending else branches.match_report(ROOT / name, saved, dry_run=True)
                 except (ValueError, KeyError, OSError) as e:
                     return self._send(400, {"error": str(e)[:240]})
-                return self._send(200, {"ok": True, "report": saved, "info": info, "preview": preview})
+                return self._send(200, {"ok": True, "report": saved, "info": info, "preview": preview,
+                                        "pending": pending})
             if running() and job.get("csv") == name:
                 return self._send(400, {"error": "a job is running on this work list: stop it first, then match"})
+            rp = branches.reports_dir(ROOT / name) / os.path.basename(body.get("report", ""))
+            if branches.is_additional_list(ROOT / name) and rp.exists() and branches.report_info(rp)["kind"] == "loan":
+                return self._send(400, {"error": "this is the pending report: use it in Report analysis below"})
             try:
                 with lock:
                     res = branches.match_report(ROOT / name, body.get("report", ""))
