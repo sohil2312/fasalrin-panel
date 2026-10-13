@@ -11,7 +11,7 @@ CHECKS before APPROVE (any failure -> BACK, never approved, MISMATCH)
   * the claim no is one our IS additional job filed (branches/<SOL>/additional/<SOL>_additional_claims.csv, CLAIMED)
   * preview account == row account == ours;  claim no == ours
   * Applicable IS == what we filed == min(work list Int Sub Amt, Maximum Allowed Claim) (to the paisa), > 0
-  * First Loan Disbursal/Interest Cycle Start Date == work list Disb. Date (up to 3 days apart)
+  * First Loan Disbursal/Interest Cycle Start Date == work list Disb. Date (up to 7 days apart)
   * Rollover Date == work list Repay. Date (or start + 1 year - 1 day if earlier)   (bank flowchart for 1.5% IS Additional FY 2025-26)
   * Is Rollover Claim == Yes;  Loan Application FY == 2024-2025;  status SUBMITTED
 Claims not filed by our IS additional job (IS regular ones included) are walked past.
@@ -103,7 +103,7 @@ def check_claim(d: dict, row: dict, mine: dict, xl: dict | None) -> list[str]:
     elif not (fd and rd):
         probs.append("could not read disbursal/rollover dates")
     else:
-        if not xl["disb"] or abs((fd - xl["disb"]).days) > 3:
+        if not xl["disb"] or abs((fd - xl["disb"]).days) > ad.DISB_SLACK_DAYS:
             probs.append(f"start {fd:%d/%m/%Y} != Disb. Date {xl['disb']:%d/%m/%Y}" if xl["disb"] else "no Disb. Date in work list")
         want_rd = min(xl["repay"], ad.year_end(fd)) if xl["repay"] else None
         if rd != want_rd:

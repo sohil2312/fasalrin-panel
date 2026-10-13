@@ -9,7 +9,7 @@ D:\\fasalrin\\15 additional\\fasalrin-is-additional\\fasalrin_rollover.py):
   IS/PRI Claim Application: FY 2024-2025 / IS / ROLLOVER / ALL -> PROCEED
   per account: "Search Here" + magnifier -> REVIEW the account's rows, highest Applicable IS first, until the
   IS Claim Details show
-      First Loan Disbursal/Interest Cycle Start Date == work list Disb. Date (up to 3 days apart)  and
+      First Loan Disbursal/Interest Cycle Start Date == work list Disb. Date (up to 7 days apart)  and
       Interest Cycle end/Rollover Date == 31/03/2025
     (no row of the account in the list -> NOT_FOUND; rows but none matching -> NO_MATCH, hand work)
     -> CONTINUE ROLLOVER -> "no longer available" -> CLOSED   |   "proceed ... 2025-2026?" -> YES
@@ -52,7 +52,7 @@ HEADER = ["Time", f.COL_ACCT, "Claim No", "First Disbursal", "Rollover Date", "L
           "Max Allowed Claim", COL_INTSUB, "IS Claimed", "Result", f.COL_DETAIL]
 COL_DISB, COL_REPAY = "Disb. Date", "Repay. Date"
 CYCLE_END = date(2025, 3, 31)            # the 2024-25 cycle being rolled over ends on 31/03/2025
-DISB_SLACK_DAYS = 3                      # portal start date may differ from the Excel Disb. Date by up to 3 days
+DISB_SLACK_DAYS = 7                      # portal start date may differ from the Excel Disb. Date by up to 7 days (user, 2026-10-13)
 # finished or hand work: never re-filed by the job (a re-upload with Fixed = Y appends RETRY)
 DONE = {"CLAIMED", "ALREADY_ON_PORTAL", "NOT_FOUND", "CLOSED", "NO_MATCH", "WRONG_CLAIM"}
 RECORDS_CSV = ""
