@@ -78,15 +78,43 @@ def load_claims() -> dict:
     return out
 
 
+def entered_elsewhere(csv_path) -> dict:
+    """account -> loan app no for loans of this branch entered another way: APPROVED in <SOL>_approvals.csv
+    (approval job or by hand) or COMPLETED in the IS fresh list. Their IS regular status can still say
+    NOT_IN_SYSTEM / NO_ACCT_DROPDOWN, yet the loan is on the portal and needs its IS claim too."""
+    out = {}
+    base = os.path.splitext(csv_path)[0]
+    ap = base + "_approvals.csv"
+    if os.path.exists(ap):
+        with open(ap, newline="", encoding="utf-8-sig") as fh:
+            for e in csv.DictReader(fh):
+                a = (e.get(f.COL_ACCT) or "").strip()
+                if a:
+                    if (e.get("Approval") or "").strip() == "APPROVED":
+                        out[a] = (e.get(f.COL_APPNO) or "").strip()
+                    else:
+                        out.pop(a, None)                   # latest record wins
+    sol = os.path.basename(base)
+    fresh = os.path.join(os.path.dirname(csv_path), "fresh", f"{sol}_fresh.csv")
+    if os.path.exists(fresh):
+        import fasalrin_fresh as ff
+        for a, e in ff.progress_records(fresh).items():
+            if e["Status"] in ("COMPLETED", "ALREADY_ON_PORTAL"):
+                out.setdefault(a.strip(), e["Loan App No"])
+    return out
+
+
 def work_list():
-    """[(account, app no, Int Sub Amt as float, Disb. Date)] for the branch work list's finished applications."""
+    """[(account, app no, Int Sub Amt as float, Disb. Date)] for the branch work list's finished applications,
+    plus its rows whose loan was approved / entered another way (approvals file, IS fresh)."""
     f.INPUT_CSV = f.OUTPUT_CSV
     header, rows, idx = f.load_rows()
+    other = entered_elsewhere(f.OUTPUT_CSV)
     out = []
     for r in rows[1:]:
         acct = r[idx[f.COL_ACCT]].strip()
-        if acct and f.bucket(r[idx[f.COL_STATUS]]) == "finished":
-            out.append((acct, r[idx[f.COL_APPNO]].strip(),
+        if acct and (f.bucket(r[idx[f.COL_STATUS]]) == "finished" or acct in other):
+            out.append((acct, r[idx[f.COL_APPNO]].strip() or other.get(acct, ""),
                         money_to_float(r[idx[COL_INTSUB]]) if COL_INTSUB in idx else 0.0,
                         r[idx[f.COL_DISB]].strip() if f.COL_DISB in idx else ""))
     return header, rows, idx, out
@@ -98,18 +126,22 @@ def work_list():
 def _select(page, name, label):
     sel = page.locator(f'select[name="{name}"]').first
     sel.wait_for()
+    picked = lambda: sel.evaluate("s => (s.options[s.selectedIndex]||{}).text.trim()") == label
+    if picked():
+        return
     for _ in range(5):
         sel.select_option(label=label)
-        page.wait_for_timeout(300)
-        if sel.evaluate("s => (s.options[s.selectedIndex]||{}).text.trim()") == label:
-            return
+        for _ in range(10):                          # poll (<= 0.5 s, usually at once) instead of a fixed 0.3 s
+            if picked():
+                return
+            page.wait_for_timeout(50)
     raise StuckError(f"could not select {label!r} in {name}")
 
 
 def open_list(page):
     """IS/PRI Claim Application -> FY / IS / PENDING -> PROCEED."""
     f.click_side_nav(page, "/dashboard")
-    page.wait_for_timeout(800)
+    wait_for(page, lambda: "/dashboard" in page.url, 15, "dashboard")
     f.click_side_nav(page, "/claim-application-list")
     wait_for(page, lambda: "/claim-application-list" in page.url, f.STUCK_TIMEOUT_S, "claim list page")
     _select(page, "financialYear", f.FIN_YEAR)
@@ -119,7 +151,6 @@ def open_list(page):
     # loaded = "Total Count" + the list table (as in the proven rollover script), or no records at all
     wait_for(page, lambda: (re.search(r"Total Count", f.body_text(page)) and _table_state(page) in ("rows", "empty"))
              or re.search(r"No record\(s\) found", f.body_text(page)), 90, "claim list to load")
-    page.wait_for_timeout(300)
 
 
 def _table_state(page) -> str:
@@ -148,7 +179,6 @@ def find_rows(page, acct) -> list[dict]:
         const t = [...document.querySelectorAll('table')].find(t => /Loan Application No/i.test(t.innerText));
         return !!t && [...t.querySelectorAll('tbody tr')].some(r => [...r.children].some(td => td.innerText.trim() === a));
     }""", acct), 12, "search results for this account")
-    page.wait_for_timeout(150)
     return page.evaluate(r"""() => {
         const t = [...document.querySelectorAll('table')].find(t => /Loan Application No/i.test(t.innerText));
         if (!t) return [];
@@ -202,7 +232,6 @@ def file_claim(page, row, intsub, disb, mark_submitting):
     tr.locator("button", has_text=BTN("ADD")).first.click()
     wait_for(page, lambda: "/claim-against-loan-app" in page.url and
              page.locator('input[name="maxWithdrawalAmount"]').count(), f.STUCK_TIMEOUT_S, "claim form")
-    page.wait_for_timeout(800)
 
     # the date fields stay greyed out (covered) until IS Submission Type is chosen -> choose it first
     _select(page, "priSubmissionType", SUBMISSION_TYPE)
@@ -215,8 +244,15 @@ def file_claim(page, row, intsub, disb, mark_submitting):
             const top = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
             return !el.disabled && !!top && (top === el || el.contains(top) || top.contains(el)); }""")
 
-    # start = disbursal date (the first active date of that calendar); a date the portal prefilled wins
-    page.wait_for_timeout(800)
+    # start = disbursal date (the first active date of that calendar); a date the portal prefilled wins.
+    # Wait until the field unlocks or shows a prefilled date (instead of a fixed 0.8 s), then a short grace
+    # so a prefill that comes with the unlock is not overwritten
+    prefilled = lambda: re.fullmatch(r"\d{2}/\d{2}/\d{4}", start_in.input_value().strip())
+    try:
+        wait_for(page, lambda: prefilled() or is_open(start_in), 5, "start date field")
+    except StuckError:
+        pass
+    page.wait_for_timeout(250)
     if not re.fullmatch(r"\d{2}/\d{2}/\d{4}", start_in.input_value().strip()):
         if not disb:
             raise RuntimeError("no Disb. Date in the work list to pick as interest cycle start")
@@ -225,13 +261,11 @@ def file_claim(page, row, intsub, disb, mark_submitting):
             f.pick_calendar_date(page, start_in, f.parse_dmy(disb))
         except RuntimeError as e:
             raise RuntimeError(f"start date {disb} (Disb. Date) not selectable on the portal: {e}")
-    page.wait_for_timeout(500)
 
     # end = repayment date 31-03-2026 (the last date)
     wait_for(page, lambda: is_open(end_in), 15, "end date field to unlock")
     if end_in.input_value().strip() != f"{REPAY_DATE:%d/%m/%Y}":
         f.pick_calendar_date(page, end_in, REPAY_DATE)
-    page.wait_for_timeout(500)
 
     # the activity table renders a beat after the inputs: poll, never read once
     sanctioned = wait_for(page, lambda: _table_amounts(page)[0] or None, 10, "Loan Sanctioned Amount on the form")
@@ -262,9 +296,9 @@ def file_claim(page, row, intsub, disb, mark_submitting):
     page.locator(".modal-content:visible button", has_text=BTN("OK")).first.click()
     wait_for(page, lambda: "/claim-application-preview" in page.url and
              page.locator("button:visible", has_text=BTN("SUBMIT")).count(), f.STUCK_TIMEOUT_S, "claim preview")
-    page.wait_for_timeout(500)
-    body = re.sub(r"\s+", " ", f.body_text(page))
-    if row["acct"] not in body:
+    try:                                         # the account renders a beat after SUBMIT: wait just for it
+        wait_for(page, lambda: row["acct"] in re.sub(r"\s+", " ", f.body_text(page)), 5, "account on the preview")
+    except StuckError:
         raise RuntimeError(f"claim preview does not show account {row['acct']}")
 
     # ---- SUBMIT -> CONFIRM -> "Claim application No. <no> has been submitted successfully" -> OK
@@ -277,7 +311,10 @@ def file_claim(page, row, intsub, disb, mark_submitting):
                    f.STUCK_TIMEOUT_S, "claim submitted dialog")
     m = re.search(r"Claim application No\.?\s*([0-9]+)", txt, re.I)
     page.locator(".modal-content:visible button", has_text=BTN("OK")).first.click()
-    page.wait_for_timeout(800)
+    try:                                         # dialog gone = the portal moved on (instead of a fixed 0.8 s)
+        wait_for(page, lambda: not modal_text(page).strip(), 5, "submitted dialog to close")
+    except StuckError:
+        pass
     return sanctioned, max_allowed, claim, (m.group(1) if m else "")
 
 
@@ -296,7 +333,7 @@ def main(limit: int, assume_yes: bool):
         print(f"[claims] {len(held)} CLAIM_CHECK_PORTAL -> NOT retried, check on the portal: {', '.join(held[:10])}")
 
     with sync_playwright() as p:
-        ctx = p.chromium.launch_persistent_context(PROFILE_DIR, headless=f.HEADLESS, slow_mo=f.SLOWMO_MS,
+        ctx = p.chromium.launch_persistent_context(PROFILE_DIR, headless=f.HEADLESS, slow_mo=0,   # waits poll
                                                    viewport=None, args=["--start-maximized"])
         ctx.set_default_timeout(f.STUCK_TIMEOUT_S * 1000)
         page = ctx.pages[0] if ctx.pages else ctx.new_page()

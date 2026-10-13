@@ -131,7 +131,6 @@ def click_back(page):
     page.locator("button:visible", has_text=BTN("BACK")).first.click()
     wait_for(page, lambda: "/claim-application-list" in page.url and page.locator("table.issCustomTable").count(),
              f.STUCK_TIMEOUT_S, "back on the claim list")
-    page.wait_for_timeout(300)
 
 
 def goto_next_page(page) -> bool:
@@ -148,9 +147,13 @@ def goto_next_page(page) -> bool:
         except ValueError:
             continue
         if n == cur + 1:
+            before = [r["claim"] for r in list_rows(page)]
             tabs.nth(i).click()
-            page.wait_for_timeout(1500)
-            page.locator("table.issCustomTable").first.wait_for(timeout=20000)
+            try:                                     # the page tab is selected and the rows changed (not a fixed 1.5 s)
+                wait_for(page, lambda: sel.count() and sel.first.inner_text().strip() == str(n)
+                         and [r["claim"] for r in list_rows(page)] != before, 20, f"list page {n}")
+            except StuckError:
+                page.locator("table.issCustomTable").first.wait_for(timeout=20000)
             return True
     return False
 
@@ -158,11 +161,15 @@ def goto_next_page(page) -> bool:
 def _select(page, name, label):
     sel = page.locator(f'select[name="{name}"]').first
     sel.wait_for()
+    picked = lambda: sel.evaluate("s => (s.options[s.selectedIndex]||{}).text.trim()") == label
+    if picked():
+        return
     for _ in range(5):
         sel.select_option(label=label)
-        page.wait_for_timeout(300)
-        if sel.evaluate("s => (s.options[s.selectedIndex]||{}).text.trim()") == label:
-            return
+        for _ in range(10):                          # poll (<= 0.5 s, usually at once) instead of a fixed 0.3 s
+            if picked():
+                return
+            page.wait_for_timeout(50)
     raise StuckError(f"could not select {label!r} in {name}")
 
 
@@ -184,13 +191,12 @@ def list_rows(page) -> list[dict]:
 def open_list(page):
     """Dashboard -> Claim Applications tab -> View Details -> filters -> PROCEED."""
     f.click_side_nav(page, "/dashboard")
-    page.wait_for_timeout(1000)
+    wait_for(page, lambda: "/dashboard" in page.url, 15, "dashboard")
     if "/claim-application-list" not in page.url:
         # Dashboard -> 'Claim Applications' tab -> card 'pending for Approval' -> View Details (confirmed route)
         tab = page.locator(".nav-link", has_text=re.compile(r"^\s*Claim Applications\s*$", re.I))
         wait_for(page, lambda: tab.count(), 15, "Claim Applications tab")
         tab.first.click()
-        page.wait_for_timeout(800)
         btn = page.locator(".dashboard-box", has_text=re.compile("pending for Approval", re.I)) \
                   .locator("button", has_text=re.compile("View Details", re.I))
         wait_for(page, lambda: btn.count(), f.STUCK_TIMEOUT_S, "'pending for Approval' View Details")
@@ -204,10 +210,8 @@ def open_list(page):
     if page.locator('select[name="branchOrPacs"]').count():
         _select(page, "branchOrPacs", "Branch")
     page.locator("button:visible", has_text=BTN("PROCEED")).first.click()
-    page.wait_for_timeout(1000)
-    wait_for(page, lambda: (re.search(r"Total Count", f.body_text(page)) and page.locator("table.issCustomTable").count())
+    wait_for(page, lambda: (re.search(r"Total Count", f.body_text(page)) and list_rows(page))
              or re.search(r"No record\(s\) found", f.body_text(page)), 90, "claim table")
-    page.wait_for_timeout(300)
 
 
 def review_and_approve(page, row, mine, disb, stage):
@@ -242,7 +246,10 @@ def approve_one(page, row) -> str:
     txt = wait_for(page, after, f.STUCK_TIMEOUT_S, "claim approved dialog")
     m = re.search(r"Claim application No\.?\s*(\d+)", txt, re.I)
     page.locator(".modal-content:visible button", has_text=BTN("OK")).first.click()
-    page.wait_for_timeout(800)
+    try:                                         # dialog gone (instead of a fixed 0.8 s)
+        wait_for(page, lambda: not modal_text(page).strip(), 5, "approved dialog to close")
+    except StuckError:
+        pass
     return m.group(1) if m else row["claim"]
 
 
@@ -254,7 +261,7 @@ def main(limit: int, assume_yes: bool):
     print(f"[claims] {CLAIMS_CSV}: {len(ours)} claims filed by the script (only these, after checks, get approved)")
 
     with sync_playwright() as p:
-        ctx = p.chromium.launch_persistent_context(PROFILE_DIR, headless=f.HEADLESS, slow_mo=f.SLOWMO_MS,
+        ctx = p.chromium.launch_persistent_context(PROFILE_DIR, headless=f.HEADLESS, slow_mo=0,   # waits poll
                                                    viewport=None, args=["--start-maximized"])
         ctx.set_default_timeout(f.STUCK_TIMEOUT_S * 1000)
         page = ctx.pages[0] if ctx.pages else ctx.new_page()
