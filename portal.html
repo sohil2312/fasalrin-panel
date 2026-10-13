@@ -557,23 +557,7 @@
         <input type="file" id="mFile" accept=".xlsx">
         <button id="mUpBtn" disabled>Upload master</button>
         <button id="colsBtn" type="button" aria-expanded="false" aria-controls="colsBox">Columns</button>
-        <button id="mapBtn" type="button" aria-expanded="false" aria-controls="mapBox" style="display:none">Map columns</button>
         <span id="mMsg" class="muted"></span>
-      </div>
-      <div id="mapBox" style="display:none;margin-top:10px">
-        <div class="muted" id="mapFor"></div>
-        <table style="margin-top:6px"><thead><tr><th>Field</th><th>Column in this file</th><th>Values in the file</th></tr></thead>
-          <tbody id="mapBody"></tbody></table>
-        <div class="row" style="margin-top:8px">
-          <label for="mapFilterCol" style="margin:0">Only rows where</label>
-          <select id="mapFilterCol" style="max-width:220px"></select>
-          <span>=</span>
-          <input id="mapFilterVal" type="text" placeholder="value, e.g. YES" style="max-width:140px">
-        </div>
-        <div class="row">
-          <button id="mapOk" type="button" class="primary">Confirm columns</button>
-          <span id="mapMsg" class="muted">Check each column, then confirm. Nothing is used before you confirm.</span>
-        </div>
       </div>
       <div id="colsBox" style="display:none;margin-top:10px">
         <div class="row" style="margin-top:0">
@@ -1027,12 +1011,7 @@ async function loadMasters() {
   sel.value = r.master || "";
   sols = r.error ? [] : r.sols;
   learnBranches(sols);
-  $("mapBtn").style.display = r.mappable && r.master ? "" : "none";
-  if (!r.mappable || !r.master) { $("mapBox").style.display = "none"; $("mapBtn").setAttribute("aria-expanded", "false"); }
-  else if (!r.mapped && r.error) openMap(r.master);      // other headings: the user picks the columns first
-  if (r.error && r.mappable && !r.mapped) { $("buildMsg").className = "muted";
-    $("buildMsg").textContent = "This file has other column names: pick the columns in Map columns and confirm."; }
-  else if (r.error) { $("buildMsg").className = "err"; $("buildMsg").textContent = r.error; }
+  if (r.error) { $("buildMsg").className = "err"; $("buildMsg").textContent = r.error; }
   const opt = s => `<option value="${esc(s.sol)}">${esc(s.sol)} · ${esc(s.branch)}${s.built ? "  ✓ built" : ""}</option>`;
   const built = sols.filter(s => s.built), rest = sols.filter(s => !s.built);
   $("solPick").innerHTML = sols.length
@@ -1117,51 +1096,6 @@ $("fUpBtn").onclick = async () => {
     + (r.area_col ? ` Land area: <b>${esc(r.area_col)}</b>.` : ` <span class="err">No LAND AREA column: crop rows → NO_LAND.</span>`);
   csvChoice = r.csv.replace(/\\/g, "/"); lastScheme = null; poll();
 };
-// ---- column mapping (IS additional): the user picks which column of the file is which field ----
-let mapInfo = null;
-async function openMap(master) {
-  const r = await (await fetch(`/api/master_map?type=${mtype()}&master=${encodeURIComponent(master)}`)).json();
-  if (r.error) { $("mMsg").className = "err"; $("mMsg").textContent = r.error; return; }
-  mapInfo = r;
-  $("mapBox").style.display = ""; $("mapBtn").setAttribute("aria-expanded", "true");
-  $("mapFor").innerHTML = `<b>${esc(r.master)}</b> · ${r.headers.length} columns · `
-    + (r.saved ? "saved mapping (change and confirm again if needed)" : "suggested — <b>not confirmed yet</b>");
-  const opts = (f, cur) => `<option value="">— pick —</option>`
-    + (f.kind === "sol" ? `<option value="${esc(r.sol_from_acct)}" ${cur === r.sol_from_acct ? "selected" : ""}>From Account No. (first 4 digits)</option>` : "")
-    + r.headers.map(h => `<option value="${esc(h)}" ${h === cur ? "selected" : ""}>${esc(h)}</option>`).join("");
-  $("mapBody").innerHTML = r.fields.map((f, i) => `<tr><td><b>${esc(f.field)}</b>${f.required ? "" : " <span class='muted'>(optional)</span>"}</td>
-      <td><select data-field="${esc(f.field)}" id="map_${i}">${opts(f, r.mapping[f.field] || "")}</select></td>
-      <td class="muted" id="mapS_${i}"></td></tr>`).join("");
-  const asDate = x => {                            // Excel serial numbers (45404.23) shown as the date they are
-    if (!/^\d{5}(\.\d+)?$/.test(x)) return x;
-    const d = new Date(Date.UTC(1899, 11, 30) + Math.floor(parseFloat(x)) * 864e5);
-    return `${String(d.getUTCDate()).padStart(2, "0")}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${d.getUTCFullYear()}`;
-  };
-  const sample = i => { const v = $(`map_${i}`).value, f = r.fields[i];
-    $(`mapS_${i}`).textContent = v === r.sol_from_acct ? "taken from the account number"
-      : ((r.samples[v] || []).map(x => f.kind === "date" ? asDate(x) : x).join(" · ") || ""); };
-  r.fields.forEach((f, i) => { sample(i); $(`map_${i}`).onchange = () => sample(i); });
-  $("mapFilterCol").innerHTML = `<option value="">— all rows —</option>`
-    + r.headers.map(h => `<option value="${esc(h)}" ${h === r.mapping._filter_col ? "selected" : ""}>${esc(h)}</option>`).join("");
-  $("mapFilterVal").value = r.mapping._filter_val || "";
-  $("mapMsg").className = "muted"; $("mapMsg").textContent = "Check each column, then confirm. Nothing is used before you confirm.";
-}
-$("mapBtn").addEventListener("click", () => {
-  if ($("mapBox").style.display === "none") openMap($("master").value);
-  else { $("mapBox").style.display = "none"; $("mapBtn").setAttribute("aria-expanded", "false"); }
-});
-$("mapOk").addEventListener("click", async () => {
-  if (!mapInfo) return;
-  const mapping = {};
-  document.querySelectorAll("#mapBody select").forEach(s => { mapping[s.dataset.field] = s.value; });
-  mapping._filter_col = $("mapFilterCol").value; mapping._filter_val = $("mapFilterVal").value.trim();
-  $("mapMsg").className = "muted"; $("mapMsg").textContent = "checking…";
-  const r = await post("/api/master_map", {type: mtype(), master: mapInfo.master, mapping});
-  if (r.error) { $("mapMsg").className = "err"; $("mapMsg").textContent = r.error; return; }
-  $("mapMsg").className = "";
-  $("mapMsg").innerHTML = `Confirmed: <b>${r.rows}</b> rows, <b>${r.sols}</b> branches, ${r.pending} with Int Sub Amt &gt; 0. Now pick a branch and Build.`;
-  masterChoice = mapInfo.master; $("buildMsg").textContent = ""; loadMasters();
-});
 $("colsBtn").addEventListener("click", () => {
   const open = $("colsBox").style.display === "none";
   $("colsBox").style.display = open ? "" : "none";
@@ -1190,7 +1124,6 @@ $("mUpBtn").onclick = async () => {
   if (r.error) { $("mMsg").className = "err"; $("mMsg").textContent = r.error; return; }
   $("mMsg").className = "muted"; $("mMsg").textContent = "saved " + r.master;
   $("mFile").value = ""; $("mUpBtn").disabled = true; masterChoice = r.master; loadMasters();
-  if (mtype() === "additional") openMap(r.master);   // always confirm the columns of a new IS additional file
 };
 let savedTab = "isclaim";
 try { savedTab = localStorage.getItem("fasalrinTab") || "isclaim"; } catch (e) {}

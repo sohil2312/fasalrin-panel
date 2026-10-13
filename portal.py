@@ -126,26 +126,12 @@ def save_master(name: str, b64: str, kind: str = "regular") -> tuple[str | None,
                     "'Upload corrected CSVs' in CSV totals"), None
     except Exception:
         pass
-    if kind in branches.MAP_FIELDS:               # other headings: kept, the user maps the columns in the panel
-        return None, dest.name
     try:                                          # validates the columns for that master type
         SOLS_OF.get(kind, branches.sols)(dest)
     except Exception as e:
         dest.unlink(missing_ok=True)
         return str(e)[:200], None
     return None, dest.name
-
-
-def master_map_info(kind: str, name: str) -> dict:
-    """For the mapping box: the file's headings with sample values, the fields, the saved or suggested mapping."""
-    d = MASTER_DIRS[kind]
-    if name not in masters(kind):
-        raise ValueError("pick a master")
-    headers, samples = branches.master_headers(d / name)
-    saved = branches.load_map(d / name)
-    return {"type": kind, "master": name, "headers": headers, "samples": samples, "saved": bool(saved),
-            "fields": [{"field": fl, "required": rq, "kind": vk} for fl, rq, vk, _ in branches.MAP_FIELDS[kind]],
-            "mapping": saved or branches.suggest_map(kind, headers), "sol_from_acct": branches.SOL_FROM_ACCT}
 
 
 def xlsx_to_csv_text(b64: str) -> str:
@@ -515,16 +501,6 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(data)))
             self.end_headers()
             self.wfile.write(data)
-        elif self.path.startswith("/api/master_map"):
-            from urllib.parse import unquote
-            q = {k: unquote(v) for k, v in (x.split("=", 1) for x in self.path.partition("?")[2].split("&") if "=" in x)}
-            kind = q.get("type", "")
-            if kind not in branches.MAP_FIELDS:
-                return self._send(400, {"error": "this master type has fixed columns"})
-            try:
-                self._send(200, master_map_info(kind, q.get("master", "")))
-            except Exception as e:
-                self._send(400, {"error": str(e)[:200]})
         elif self.path.startswith("/api/masters"):
             from urllib.parse import unquote
             q = {k: unquote(v) for k, v in (x.split("=", 1) for x in self.path.partition("?")[2].split("&") if "=" in x)}
@@ -539,9 +515,7 @@ class Handler(BaseHTTPRequestHandler):
                 err = None
             except Exception as e:
                 sols, err = [], str(e)[:200]
-            self._send(200, {"type": kind, "masters": ms, "master": sel, "sols": sols, "error": err,
-                             "mappable": kind in branches.MAP_FIELDS,
-                             "mapped": bool(sel) and bool(branches.load_map(MASTER_DIRS[kind] / sel))})
+            self._send(200, {"type": kind, "masters": ms, "master": sel, "sols": sols, "error": err})
         elif self.path.startswith("/api/reports"):
             from urllib.parse import unquote
             q = {k: unquote(v) for k, v in (x.split("=", 1) for x in self.path.partition("?")[2].split("&") if "=" in x)}
@@ -601,21 +575,6 @@ class Handler(BaseHTTPRequestHandler):
             except (ValueError, KeyError, csv.Error) as e:
                 return self._send(400, {"error": str(e)[:200]})
             return self._send(200, {"ok": True, **res})
-        if self.path == "/api/master_map":               # the user confirmed the column mapping
-            kind = body.get("type", "")
-            if kind not in branches.MAP_FIELDS:
-                return self._send(400, {"error": "this master type has fixed columns"})
-            name = body.get("master", "")
-            if name not in masters(kind):
-                return self._send(400, {"error": "pick a master"})
-            try:
-                with lock:
-                    mp = branches.save_map(kind, MASTER_DIRS[kind] / name, body.get("mapping") or {})
-                    sols = SOLS_OF[kind](MASTER_DIRS[kind] / name)
-            except Exception as e:
-                return self._send(400, {"error": str(e)[:200]})
-            return self._send(200, {"ok": True, "mapping": mp, "sols": len(sols),
-                                    "rows": sum(s["rows"] for s in sols), "pending": sum(s["pending"] for s in sols)})
         if self.path == "/api/master_upload":
             kind = body.get("type") if body.get("type") in MASTER_KINDS else "regular"
             err, saved = save_master(body.get("name", ""), body.get("b64", ""), kind)
@@ -651,8 +610,6 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(400, {"error": "pick a master and a SOL"})
             if running():
                 return self._send(400, {"error": "stop the running job first"})
-            if kind in branches.MAP_FIELDS and not branches.load_map(MASTER_DIRS[kind] / m):
-                return self._send(400, {"error": "confirm the columns of this file first: Map columns → Confirm columns"})
             try:
                 with lock:
                     d = MASTER_DIRS[kind]
