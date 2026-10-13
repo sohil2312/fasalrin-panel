@@ -121,6 +121,67 @@ def read_preview(page) -> dict:
     raise RuntimeError("claim preview never populated")
 
 
+# ---- learning the portal's preview data (so a later version can read it without waiting for the screen) ----
+LEARN_FILE = "logs/preview_api_learn.json"
+LEARN_MAX = 3                         # previews to learn from per run
+_learn = {"n": 0, "resp": []}
+
+
+def learn_listen(page):
+    """Keep the JSON answers the portal sends while a preview opens (only during the first previews)."""
+    def on_resp(resp):
+        if _learn["n"] >= LEARN_MAX:
+            return
+        try:
+            if "json" in (resp.headers.get("content-type") or ""):
+                _learn["resp"].append((resp.request.method, resp.url.split("?")[0], resp.json()))
+        except Exception:
+            pass
+    try:
+        page.on("response", on_resp)
+    except Exception:
+        pass
+
+
+def learn_store(d: dict):
+    """Which JSON fields hold the preview's values: saved as field PATHS only (no farmer data)."""
+    if _learn["n"] >= LEARN_MAX:
+        return
+    _learn["n"] += 1
+    import json
+    want = {k: str(v).strip() for k, v in d.items() if v and k in (
+        "Claim No.", "Account No.", "Applicable IS", "Maximum Allowed Claim", "Is Rollover Claim",
+        "Interest Cycle end/Rollover Date", "First Loan Disbursal/Interest Cycle Start Date", "_status")}
+    norm = lambda x: re.sub(r"[^0-9a-z.]", "", str(x).lower())
+    found = []
+    def walk(o, path, method, url):
+        if isinstance(o, dict):
+            for k, v in o.items():
+                walk(v, f"{path}.{k}", method, url)
+        elif isinstance(o, list):
+            for i, v in enumerate(o[:5]):
+                walk(v, f"{path}[{i}]", method, url)
+        else:
+            for label, val in want.items():
+                if o is not None and norm(o) and (norm(o) == norm(val) or norm(o) == norm(money_to_float(val))):
+                    found.append({"label": label, "method": method, "url": re.sub(r"\d{6,}", "<n>", url), "path": path})
+    for method, url, body in _learn["resp"]:
+        walk(body, "$", method, url)
+    _learn["resp"] = []
+    try:
+        os.makedirs(os.path.dirname(LEARN_FILE), exist_ok=True)
+        old = json.load(open(LEARN_FILE, encoding="utf-8")) if os.path.exists(LEARN_FILE) else []
+        old.append({"time": time.strftime("%Y-%m-%d %H:%M:%S"), "labels": sorted(want), "found": found})
+        json.dump(old[-10:], open(LEARN_FILE, "w", encoding="utf-8"), indent=1)
+        print(f"    [learn] preview data: {len({x['label'] for x in found})} of {len(want)} values found in the "
+              f"portal's answers -> {LEARN_FILE}", flush=True)
+    except Exception:
+        pass
+
+
+T = f.StepTimer()
+
+
 def decided() -> dict:
     """claim no -> latest result in the approvals file (APPROVED / MISMATCH / CHECK_PORTAL / ...)."""
     out = {}
@@ -297,11 +358,15 @@ def open_list(page):
 
 def review_and_approve(page, row, mine, disb, stage):
     """REVIEW -> read preview -> checks -> APPROVE (or BACK). Returns (result, detail)."""
+    T.mark("find")
     tr = page.locator("table tbody tr", has_text=row["claim"]).first
     tr.locator("button", has_text=BTN("REVIEW")).first.click()
     wait_for(page, lambda: "/claim-application-preview" in page.url and
              page.locator("button:visible", has_text=BTN("APPROVE")).count(), f.STUCK_TIMEOUT_S, "claim preview")
+    T.mark("review")
     d = read_preview(page)
+    T.mark("preview")
+    learn_store(d)
     probs = check_claim(d, row, mine, disb)
     if probs:
         shot(page, f"claim_mismatch_{row['acct']}")
@@ -325,12 +390,14 @@ def approve_one(page, row) -> str:
             confirm.first.click()
         return None
     txt = wait_for(page, after, f.STUCK_TIMEOUT_S, "claim approved dialog")
+    T.mark("approve")
     m = re.search(r"Claim application No\.?\s*(\d+)", txt, re.I)
     page.locator(".modal-content:visible button", has_text=BTN("OK")).first.click()
     try:                                         # dialog gone (instead of a fixed 0.8 s)
         wait_for(page, lambda: not modal_text(page).strip(), 5, "approved dialog to close")
     except StuckError:
         pass
+    T.mark("close")
     return m.group(1) if m else row["claim"]
 
 
@@ -346,6 +413,7 @@ def main(limit: int, assume_yes: bool):
                                                    viewport=None, args=f.BROWSER_ARGS)
         ctx.set_default_timeout(f.STUCK_TIMEOUT_S * 1000)
         page = guard_page(ctx.pages[0] if ctx.pages else ctx.new_page())
+        learn_listen(page)
         page.goto(f.BASE, wait_until="domcontentloaded")
         print("\n" + "=" * 70)
         print("  LOG IN with the BRANCH HEAD login (mobile + password + captcha).")
@@ -370,6 +438,7 @@ def main(limit: int, assume_yes: bool):
                 return
             print(f"[login] branch check: portal '{got or '?'}' = work list '{want}'")
 
+        f.lighten(ctx)                                # logged in: no pictures / trackers from here on
         open_list(page)
         first = [r for r in list_rows(page) if r["status"].lower() == "submitted"]
         print(f"[list] {len(first)} IS claims Submitted on the first page")
@@ -406,6 +475,7 @@ def main(limit: int, assume_yes: bool):
                     break
                 stage = {"s": "search"}
                 cn = None
+                T.reset()
                 try:
                     page = live_page(ctx, page)
                     if "/claim-application-list" not in page.url or not can_search(page):
@@ -438,6 +508,7 @@ def main(limit: int, assume_yes: bool):
                         approved += 1
                         print(f"\r{tag}  APPROVED   | approved {approved}  mismatch {mismatched}  errors {errors}",
                               flush=True)
+                        print(T.line(), flush=True)
                     else:
                         mismatched += 1
                         print(f"\r{tag}  MISMATCH   {detail[:120]}", flush=True)
@@ -544,6 +615,8 @@ def main(limit: int, assume_yes: bool):
                 f.reload_to_dashboard(page)
                 open_list(page)
 
+        if T.summary():
+            print("\n" + T.summary())
         print(f"\n[done] {approved} claims approved, {mismatched} mismatch (not approved), {skipped} not ours, "
               f"{errors} errors.  Log: {APPROVALS_CSV}")
         if not f.NO_PROMPT:

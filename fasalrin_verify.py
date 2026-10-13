@@ -220,8 +220,12 @@ def live_page(ctx, page):
     return page
 
 
+T = f.StepTimer()
+
+
 def approve_one(page, row) -> str:
     """REVIEW -> APPROVE -> CONFIRM -> success. Returns the approved application number."""
+    T.mark("list")
     app, acct = row["app"], row["acct"]
     tr = page.locator("table tbody tr", has_text=app).first
     tr.locator("button", has_text=BTN("REVIEW")).first.click()
@@ -232,6 +236,7 @@ def approve_one(page, row) -> str:
         wait_for(page, lambda: not acct or acct in body_now(), 5, "account on the preview")
     except StuckError:
         pass
+    T.mark("review")
     body = body_now()
     if acct and acct not in body:                    # make sure REVIEW opened the row we meant
         shot(page, f"verify_mismatch_{app}")
@@ -249,6 +254,7 @@ def approve_one(page, row) -> str:
         page.locator(".modal-content:visible button", has_text=BTN("CONFIRM")).first.click()
     txt = wait_for(page, lambda: (lambda t: t if re.search(r"approved successfully", t, re.I) else None)(modal_text(page)),
                    f.STUCK_TIMEOUT_S, "approved-successfully dialog")
+    T.mark("approve")
     m = re.search(r"Loan application\s*(\d+)\s*approved successfully", txt, re.I)
     got = m.group(1) if m else ""
     page.locator(".modal-content:visible button", has_text=BTN("OK")).first.click()
@@ -256,6 +262,7 @@ def approve_one(page, row) -> str:
         wait_for(page, lambda: not modal_text(page) and "/loan-application-preview" not in page.url, 5, "back to the list")
     except StuckError:
         pass
+    T.mark("close")
     if got and got != app:
         raise RuntimeError(f"portal approved {got}, expected {app}")
     return got or app
@@ -323,6 +330,7 @@ def main(limit: int, assume_yes: bool):
                 return
             print(f"[login] branch check: portal '{got or '?'}' = work list '{want}'")
 
+        f.lighten(ctx)                                # logged in: no pictures / trackers from here on
         open_list(page)
         first = list_rows(page)
         pending = [r for r in first if r["status"].lower() == "submitted"]
@@ -345,6 +353,7 @@ def main(limit: int, assume_yes: bool):
 
         approved = errors = streak = 0
         fails: dict[str, int] = {}
+        T.reset()
         while not (limit and approved >= limit):
             if streak >= MAX_ERROR_STREAK:
                 print(f"\n[stop] {streak} errors in a row - stopping (portal slow / down?). Rerun to continue.")
@@ -374,6 +383,7 @@ def main(limit: int, assume_yes: bool):
                 print(f"\r[{approved + errors:>4}] {row['app']}  acct {row['acct']}  APPROVED"
                       f"{'' if row['acct'] in sheet.by_acct else '  (account not in CSV)'}"
                       f"   | approved {approved}  errors {errors}", flush=True)
+                print(T.line(), flush=True)
                 if "/loan-application-list" not in page.url or not list_rows(page):
                     open_list(page, refresh_only=True)
             except KeyboardInterrupt:
@@ -397,6 +407,8 @@ def main(limit: int, assume_yes: bool):
                 f.reload_to_dashboard(page)
                 open_list(page)
 
+        if T.summary():
+            print("\n" + T.summary())
         print(f"\n[done] {approved} approved, {errors} errors.  Log: {APPROVALS_CSV}  CSV: {f.OUTPUT_CSV}")
         if not f.NO_PROMPT:
             input("  >> press ENTER to close the browser: ")

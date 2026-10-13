@@ -325,7 +325,8 @@ def parse_log(lines: list[str]) -> dict:
         mt = re.match(r"\[start\]\s+(\d+) rows pending", s)
         if mt:
             total = int(mt.group(1))
-    info = [s for s in lines if re.match(r"\[(resume|reports|progress|approvals|list|start|stop|done|quit)\]", s.strip())]
+    info = [s for s in lines if re.match(r"\[(resume|reports|progress|approvals|list|start|stop|done|quit|search)\]"
+                                          r"|\[time\] average|\[learn\]", s.strip())]
     return {"results": results, "tally": dict(tally), "total": total, "errors": errors[-10:],
             "login_wait": login_wait, "alert": alert, "info": info[-12:]}
 

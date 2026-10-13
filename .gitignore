@@ -33,3 +33,6 @@ dist/
 # dummy sample files for the panel (no real data)
 !samples/*.csv
 !samples/*.xlsx
+
+# run-time learning files (portal data layout), never published
+logs/

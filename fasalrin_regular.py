@@ -291,6 +291,14 @@ def is_logged_out(page) -> bool:
 
 
 def require_login(page, reason="Session logged out"):
+    was_light, LIGHT["on"] = LIGHT["on"], False          # the login page shows everything (captcha)
+    try:
+        _require_login(page, reason)
+    finally:
+        LIGHT["on"] = was_light
+
+
+def _require_login(page, reason):
     print(f"\n  !! {reason}. In the browser: LOG IN (mobile + password + captcha).", flush=True)
     while True:
         if NO_PROMPT:
@@ -313,16 +321,75 @@ class StuckError(RuntimeError):
 
 
 def wait_for(page, fn, seconds, what):
-    """Poll fn() every 150 ms until truthy; raise StuckError after `seconds`."""
-    for _ in range(int(seconds * 1000 / 150)):
+    """Poll fn() every 80 ms until truthy; raise StuckError after `seconds` (wall clock)."""
+    end = time.time() + seconds
+    while True:
         try:
             v = fn()
         except Exception:
             v = None
         if v:
             return v
-        page.wait_for_timeout(150)
-    raise StuckError(f"timeout waiting for {what}")
+        if time.time() >= end:
+            raise StuckError(f"timeout waiting for {what}")
+        page.wait_for_timeout(80)
+
+
+# ---- speed helpers for the approval jobs ----
+class StepTimer:
+    """Seconds per step of one approval, printed as '[time] review 1.2  approve 0.9 ... = 3.1 s' and averaged
+    at the end of the run - shows where the time goes."""
+    def __init__(self):
+        self.runs = collections.defaultdict(list)
+        self.reset()
+
+    def reset(self):
+        self.t, self.parts = time.time(), []
+
+    def mark(self, name):
+        now = time.time()
+        self.parts.append((name, now - self.t))
+        self.t = now
+
+    def line(self) -> str:
+        for n, s in self.parts:
+            self.runs[n].append(s)
+        total = sum(s for _, s in self.parts)
+        self.runs["_total"].append(total)
+        out = "    [time] " + "  ".join(f"{n} {s:.1f}" for n, s in self.parts) + f"  = {total:.1f} s"
+        self.parts = []                          # the clock runs on: the next step counts from here
+        return out
+
+    def summary(self) -> str:
+        if not self.runs.get("_total"):
+            return ""
+        avg = lambda xs: sum(xs) / len(xs)
+        steps = "  ".join(f"{n} {avg(v):.1f}" for n, v in self.runs.items() if n != "_total")
+        return f"[time] average per approval ({len(self.runs['_total'])}): {steps}  = {avg(self.runs['_total']):.1f} s"
+
+
+# lighter pages while a job runs: pictures / videos / trackers are not downloaded (data, buttons and fonts are).
+# Off while logging in, so the captcha always shows.
+LIGHT = {"on": False}
+_HEAVY = re.compile(r"\.(png|jpe?g|gif|svg|webp|ico|bmp|mp4|webm)(\?|#|$)", re.I)
+_TRACKERS = re.compile(r"google-analytics|googletagmanager|gtag/js|hotjar|clarity\.ms|facebook\.net|doubleclick", re.I)
+
+
+def lighten(ctx):
+    def route(r):
+        try:
+            if LIGHT["on"] and not re.search(r"captcha", r.request.url, re.I):
+                r.abort()
+            else:
+                r.continue_()
+        except Exception:
+            pass
+    try:
+        ctx.route(_HEAVY, route)
+        ctx.route(_TRACKERS, route)
+        LIGHT["on"] = True
+    except Exception:
+        pass
 
 
 def click_side_nav(page, href):
