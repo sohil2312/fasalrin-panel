@@ -906,7 +906,7 @@ $("resetBtn").onclick = async () => {
   if (!reasons.length) return;
   const n = [...document.querySelectorAll('input[name="resetReason"]:checked')]
     .reduce((t, x) => t + (parseInt(x.closest("tr").children[2].innerText, 10) || 0), 0);
-  if (!confirm(`Reset ${n} hand-work applications (${reasons.join(", ")}) to RETRY? The next entry run will try them again.`)) return;
+  if (!confirm(`Reset ${n} hand-work rows (${reasons.join(", ")}) to RETRY? The next run will try them again.`)) return;
   $("resetMsg").className = "muted"; $("resetMsg").textContent = "resetting…";
   const r = await post("/api/reset_hand", {csv: $("csv").value, reasons});
   if (r.error) { $("resetMsg").className = "err"; $("resetMsg").textContent = r.error; return; }
@@ -1237,8 +1237,9 @@ function render(s) {
   }
   stats($("sumStats"), Object.entries(sm.status || {}).map(([k, v]) => [label(k), v]));
   const rs = sm.reasons || [];
-  const canReset = !!s.csv && ["regular", "fresh"].includes(listScheme(s.csv));
-  const NO_RESET = ["OTHER_BRANCH", "ERROR"];
+  const canReset = !!s.csv && ["regular", "fresh", "additional"].includes(listScheme(s.csv));
+  const NO_RESET = listScheme(s.csv) === "additional"      // a claim may exist on the portal: never filed again
+    ? ["CLAIM_CHECK_PORTAL", "MISMATCH", "WRONG_CLAIM"] : ["OTHER_BRANCH", "ERROR"];
   const ticked = new Set([...document.querySelectorAll('input[name="resetReason"]:checked')].map(x => x.value));
   $("resetHead").textContent = canReset ? "Retry" : "";
   $("reasons").innerHTML = rs.length ? rs.map(r => `<tr><td>${canReset && !NO_RESET.includes(r.reason)

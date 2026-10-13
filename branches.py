@@ -978,10 +978,39 @@ NOT_RESETTABLE = {"OTHER_BRANCH", "ERROR"}   # never ours / retried anyway (CHEC
                                               # and an already submitted one is caught on the preview)   # could double-submit / never ours / retried anyway
 
 
+# IS additional: a claim may already exist on the portal for these -> never filed again by a reset
+ADD_NOT_RESETTABLE = {"CLAIM_CHECK_PORTAL", "MISMATCH", "WRONG_CLAIM"}
+
+
+def reset_additional(csv_path, reasons: list[str]) -> dict:
+    """IS additional work list: rows whose reason is in `reasons` (not found / closed / no matching row /
+    errors) -> RETRY appended to the records file, so the next filing run tries them again."""
+    import fasalrin_additional as ad
+    csv_path = Path(csv_path)
+    want = [k for k in reasons if k in {r[0] for r in ADD_REASONS} and k not in ADD_NOT_RESETTABLE]
+    if not want:
+        raise ValueError("tick at least one reason that can be reset (not 'Check on portal' / 'Mismatch' / 'Wrong claim')")
+    now = datetime.now()
+    done, recs = collections.Counter(), []
+    for r in _additional_rows(csv_path):
+        k = reason_of(r.get(f.COL_STATUS) or "", ADD_REASONS)
+        if k not in want:
+            continue
+        recs.append({"Time": now.strftime("%Y-%m-%d %H:%M:%S"), f.COL_ACCT: (r.get(f.COL_ACCT) or "").strip(),
+                     "Result": f.RETRY_STATUS,
+                     f.COL_DETAIL: f"reset to retry {now:%d-%m-%Y %H:%M} (was {r.get(f.COL_STATUS)})"})
+        done[k] += 1
+    if recs:
+        _append_records(csv_path.with_name(csv_path.stem + "_claims.csv"), ad.HEADER, recs)
+    return {"reset": dict(done), "total": sum(done.values())}
+
+
 def reset_hand_work(csv_path, reasons: list[str]) -> dict:
     """IS regular work list: rows whose hand-work reason is in `reasons` -> Status RETRY (work list + progress
     file), so the next entry run tries them again. Returns {reason: rows reset}."""
     csv_path = Path(csv_path)
+    if scheme_of(csv_path) == "additional":
+        return reset_additional(csv_path, reasons)
     if scheme_of(csv_path) == "fresh":
         return reset_fresh(csv_path, reasons)
     if scheme_of(csv_path) != "regular":
