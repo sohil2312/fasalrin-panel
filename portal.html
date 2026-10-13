@@ -256,6 +256,9 @@
   .tabs { background: var(--card); border: var(--bw) solid var(--edge); border-radius: 999px; box-shadow: var(--sh-sm);
           padding: 6px 10px; gap: 6px; }
   .tab[hidden] { display: none !important; }
+  .anaPick { display: grid; grid-template-columns: 1fr 1fr auto; gap: 12px; align-items: end; }
+  .anaPick select { width: 100%; margin-top: 4px; }
+  @media (max-width: 760px) { .anaPick { grid-template-columns: 1fr; } }
   .tab { position: relative; z-index: 0; border: 0; border-radius: 999px; background: none; color: var(--ink);
          text-transform: none; letter-spacing: 0; padding: 8px 18px 6px; font-weight: 700; }
   .tab small { color: var(--muted); font-weight: 400; }
@@ -614,9 +617,17 @@
       <!-- IS additional: approved claims report + pending report -> the list to claim -->
       <div id="anaBox" style="display:none;margin-top:14px">
         <h2 style="margin:0 0 6px">Report analysis</h2>
-        <div class="row inline3" style="margin-top:0">
-          <select id="anaAppr" aria-label="Approved claims report"></select>
-          <select id="anaPend" aria-label="Pending report"></select>
+        <div class="anaPick">
+          <div>
+            <label for="anaAppr" style="margin:0"><b>1 · Approved claims report</b></label>
+            <div class="muted" id="anaApprHelp" style="font-size:.75rem"></div>
+            <select id="anaAppr"></select>
+          </div>
+          <div>
+            <label for="anaPend" style="margin:0"><b>2 · Pending report</b></label>
+            <div class="muted" id="anaPendHelp" style="font-size:.75rem"></div>
+            <select id="anaPend"></select>
+          </div>
           <button class="primary" id="anaBtn" disabled>Analyse</button>
         </div>
         <div class="muted" id="anaMsg">Upload the approved IS claims report and the portal's pending report above, pick them here, then Analyse.</div>
@@ -1281,6 +1292,13 @@ function fillAna(c, reports) {
   const on = ["additional", "isclaim"].includes(listScheme(c));
   $("anaBox").style.display = on ? "" : "none";
   if (!on) return;
+  const reg = listScheme(c) === "isclaim";
+  $("anaApprHelp").textContent = reg
+    ? "Portal IS Claim Application report, status Approved — rows with Is Rollover NO (2025-26 loans) are IS regular"
+    : "Portal IS Claim Application report, status Approved — rows with Is Rollover YES are IS additional";
+  $("anaPendHelp").textContent = reg
+    ? "Portal list of 2025-26 loans still waiting for their IS claim (optional)"
+    : "Portal rollover pending report — its 2024-25 loans (Is Rollover NO) are the rollovers still to claim (optional)";
   const opt = (r, pick) => `<option value="${esc(r.name)}"${pick ? " selected" : ""}>${esc(r.name)} · ${r.rows} rows · ${esc(r.time)}</option>`;
   // approved: an IS claim report; pending: a rollover pending report (claim format) or a loan-format list
   const appr = reports.filter(r => r.kind === "claim IS"), pend = reports.filter(r => r.kind === "claim IS" || r.kind === "loan");
