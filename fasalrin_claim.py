@@ -49,7 +49,7 @@ SUBMISSION_TYPE = "PARTIAL"
 COL_INTSUB = "Int Sub Amt"
 CLAIMS_HEADER = ["Time", f.COL_ACCT, f.COL_APPNO, "Loan Sanctioned", "Max Allowed Claim", COL_INTSUB,
                  "IS Claimed", "Result", f.COL_DETAIL]
-DONE = {"CLAIMED", "NO_INT_SUB_AMT", "CLAIM_ZERO_ALLOWED", "ALREADY_ON_PORTAL"}   # never tried again
+DONE = {"CLAIMED", "NO_INT_SUB_AMT", "CLAIM_ZERO_ALLOWED", "ALREADY_ON_PORTAL", "DATE_MISMATCH"}   # never tried again
 CLAIMS_CSV = ""
 
 
@@ -363,7 +363,7 @@ def file_claim(page, row, intsub, disb, mark_submitting):
         try:
             f.pick_calendar_date(page, start_in, f.parse_dmy(disb))
         except RuntimeError as e:
-            raise RuntimeError(f"start date {disb} (Disb. Date) not selectable on the portal: {e}")
+            raise f.DateMismatch(f"start date {disb} (Disb. Date) not selectable on the portal: {e}")
 
     # end = repayment date 31-03-2026 (the last date)
     wait_for(page, lambda: is_open(end_in), 15, "end date field to unlock")
@@ -561,6 +561,14 @@ def main(limit: int, assume_yes: bool):
                     msg = str(e).splitlines()[0][:100]
                     shot(page, f"claim_error_{acct}")
                     print(f"\n    [exc] stage={stage['s']} {type(e).__name__}: {msg}", flush=True)
+                    if isinstance(e, f.DateMismatch) and stage["s"] not in ("draft", "submitting"):
+                        # the portal's calendar does not allow the date: hand work, never retried blindly
+                        errors += 1
+                        log_claim(acct, app, "", "", intsub, "", "DATE_MISMATCH", msg)
+                        print(f"{tag}  DATE_MISMATCH  {msg}", flush=True)
+                        f.reload_to_dashboard(page)
+                        open_list(page)
+                        break
                     if stage["s"] in ("draft", "submitting"):   # saved / confirmed: never again blindly
                         errors += 1
                         print(f"{tag}  CLAIM_CHECK_PORTAL — check this claim on the portal by hand")

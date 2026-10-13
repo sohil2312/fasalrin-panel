@@ -459,7 +459,7 @@ def csv_summary(name: str) -> dict:
                     claims["filed"] += 1
                 elif v.startswith("CLAIM_CHECK_PORTAL"):
                     claims["check"] += 1
-                elif v in ("NO_INT_SUB_AMT", "CLAIM_ZERO_ALLOWED") or v.startswith("CLAIM_ERROR"):
+                elif v in ("NO_INT_SUB_AMT", "CLAIM_ZERO_ALLOWED", "DATE_MISMATCH") or v.startswith("CLAIM_ERROR"):
                     claims["hand"] += 1
             elif v == "APPROVED":
                 claims["approved"] += 1

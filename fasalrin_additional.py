@@ -54,7 +54,7 @@ COL_DISB, COL_REPAY = "Disb. Date", "Repay. Date"
 CYCLE_END = date(2025, 3, 31)            # the 2024-25 cycle being rolled over ends on 31/03/2025
 DISB_SLACK_DAYS = 7                      # portal start date may differ from the Excel Disb. Date by up to 7 days (user, 2026-10-13)
 # finished or hand work: never re-filed by the job (a re-upload with Fixed = Y appends RETRY)
-DONE = {"CLAIMED", "ALREADY_ON_PORTAL", "NOT_FOUND", "CLOSED", "NO_MATCH", "WRONG_CLAIM"}
+DONE = {"CLAIMED", "ALREADY_ON_PORTAL", "NOT_FOUND", "CLOSED", "NO_MATCH", "WRONG_CLAIM", "DATE_MISMATCH"}
 RECORDS_CSV = ""
 MONTHS = f.MONTHS
 
@@ -300,7 +300,7 @@ def pick_rollover_date(page, target: date):
         page.locator(f".rmdp-arrow-container{arrow}").first.click()
         page.wait_for_timeout(120)
     else:
-        raise RuntimeError(f"could not reach {target:%m/%Y} in calendar")
+        raise f.DateMismatch(f"could not reach {target:%m/%Y} in calendar")
     ok = page.evaluate("""(day) => {
         for (const d of document.querySelectorAll('.rmdp-day')){
           const sp=d.querySelector('span');
@@ -313,7 +313,7 @@ def pick_rollover_date(page, target: date):
         return 'notfound';
     }""", target.day)
     if ok != "ok":
-        raise RuntimeError(f"date {target:%d/%m/%Y} not selectable ({ok})")
+        raise f.DateMismatch(f"date {target:%d/%m/%Y} not selectable ({ok})")
     for _ in range(20):
         if date_input.input_value().strip():
             return
@@ -615,6 +615,16 @@ def main(limit: int, assume_yes: bool, only: str = ""):
                     msg = str(e).splitlines()[0][:100]
                     shot(page, f"add_error_{acct}")
                     print(f"\n    [exc] stage={stage['s']} {type(e).__name__}: {msg}", flush=True)
+                    if isinstance(e, f.DateMismatch) and stage["s"] not in ("draft", "submitting"):
+                        # the portal's calendar does not allow the date: hand work, never retried blindly
+                        errors += 1
+                        log(acct, "", "", "", "", "", intsub, "", "DATE_MISMATCH", msg)
+                        print(f"{tag}  DATE_MISMATCH  {msg}", flush=True)
+                        try:
+                            _recover(page)
+                        except Exception:
+                            pass
+                        break
                     if stage["s"] in ("draft", "submitting"):     # saved / confirmed: never again blindly
                         errors += 1
                         print(f"{tag}  CLAIM_CHECK_PORTAL — check this claim on the portal by hand")

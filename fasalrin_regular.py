@@ -834,6 +834,11 @@ def fill_amount(page, locator, value):
     page.wait_for_timeout(200)
 
 
+class DateMismatch(RuntimeError):
+    """The portal's calendar does not take the date (greyed out / not reachable / another date stuck):
+    the claim jobs record DATE_MISMATCH (hand work) instead of retrying."""
+
+
 def pick_calendar_date(page, date_input, target: date):
     """Open the rmdp picker attached to `date_input` and click `target`. Only the calendar that is OPEN (visible)
     is read and clicked, and after each month arrow the header must really change before it is read again
@@ -865,7 +870,7 @@ def pick_calendar_date(page, date_input, target: date):
             except StuckError:
                 pass
         else:
-            raise RuntimeError(f"could not reach {target:%m/%Y} in calendar")
+            raise DateMismatch(f"could not reach {target:%m/%Y} in calendar")
         ok = page.evaluate(
             """(day) => {
                 const vis = e => e.getClientRects().length > 0 && getComputedStyle(e).visibility !== 'hidden';
@@ -881,13 +886,13 @@ def pick_calendar_date(page, date_input, target: date):
                 return 'notfound';
             }""", target.day)
         if ok != "ok":
-            raise RuntimeError(f"date {want} not selectable ({ok})")
+            raise DateMismatch(f"date {want} not selectable ({ok})")
         try:
             wait_for(page, lambda: date_input.input_value().strip() == want, 5, f"date {want} to register")
             return
         except StuckError:
             if attempt:                              # still another date after a second try: stop, never guess
-                raise RuntimeError(f"date field shows {date_input.input_value()!r}, want {want}")
+                raise DateMismatch(f"date field shows {date_input.input_value()!r}, want {want}")
             try:
                 page.keyboard.press("Escape")
             except Exception:

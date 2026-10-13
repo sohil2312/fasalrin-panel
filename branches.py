@@ -286,7 +286,7 @@ def additional_bucket(status: str) -> str:
         return "claimed"
     if s == "ALREADY_ON_PORTAL":         # approved claim found in the portal's claim report (filed by hand / others)
         return "on_portal"
-    if s in ("NOT_FOUND", "CLOSED", "NO_MATCH", "NOT_ELIGIBLE"):
+    if s in ("NOT_FOUND", "CLOSED", "NO_MATCH", "NOT_ELIGIBLE", "DATE_MISMATCH"):
         return "skipped"
     if s.startswith("CLAIM_CHECK_PORTAL"):
         return "check"
@@ -410,7 +410,7 @@ def isclaim_bucket(status: str) -> str:
         return "waiting"
     if s.startswith("CLAIM_CHECK_PORTAL"):
         return "check"
-    if s in ("NO_INT_SUB_AMT", "CLAIM_ZERO_ALLOWED", "MISMATCH"):
+    if s in ("NO_INT_SUB_AMT", "CLAIM_ZERO_ALLOWED", "MISMATCH", "DATE_MISMATCH"):
         return "hand"
     return "error" if s.startswith("CLAIM_ERROR") else "todo"
 
@@ -664,6 +664,7 @@ ADD_REASONS = [   # IS additional (rollover) work lists
     ("NOT_FOUND",          "Not found",       "Account not in the portal's ROLLOVER list (FY 2024-2025): check by hand"),
     ("CLOSED",             "Closed",          "Rollover no longer available (already rolled / closed)"),
     ("NO_MATCH",           "No matching row", "No rollover row with start = Disb. Date and end 31/03/2025: check Disb. Date / the portal"),
+    ("DATE_MISMATCH",      "Date mismatch",   "The portal's calendar does not take the date (start / end / rollover): check the dates in the file and on the portal"),
     ("WRONG_CLAIM",        "Wrong claim",     "Claim filed with wrong data: Branch Head must not approve it; get it rejected / corrected on the portal"),
     ("MISMATCH",           "Mismatch",        "Branch Head check failed (claim no / IS / rollover date / FY): not approved"),
     ("CLAIM_CHECK_PORTAL", "Check on portal", "Saved or CONFIRM clicked but the result is unknown: check the portal"),
@@ -674,6 +675,7 @@ ADD_REASONS = [   # IS additional (rollover) work lists
 PRI_REASONS = [   # PRI additional work lists
     ("NOT_FOUND",          "Not found",       "Account not in the portal's PRI PENDING list (PRI additional: FY 2024-2025; PRI regular: FY 2025-2026 - loan not entered / approved yet?): check by hand"),
     ("NO_MATCH",           "No matching row", "No ADD row with Sanction/Rollover Date within 3 days of Disb. Date: check Disb. Date / the portal"),
+    ("DATE_MISMATCH",      "Date mismatch",   "The portal's calendar does not take the date (start / end / rollover): check the dates in the file and on the portal"),
     ("NOT_ELIGIBLE",       "Not eligible",    "Portal shows 'Eligible for PRI' = No: check by hand"),
     ("MISMATCH",           "Mismatch",        "Branch Head check failed (claim no / PRI / dates / type): not approved"),
     ("CLAIM_CHECK_PORTAL", "Check on portal", "Saved or CONFIRM clicked but the result is unknown: check the portal"),
@@ -699,6 +701,7 @@ ISCLAIM_REASONS = [   # IS regular claim lists
     ("NOT_PENDING",        "Not pending",     "Portal does not list it as Pending for an IS claim: loan not entered / approved yet, "
                                               "or claimed by hand. The next run tries again"),
     ("NO_INT_SUB_AMT",     "No Int Sub Amt",  "Int Sub Amt is 0 or blank in the claim file"),
+    ("DATE_MISMATCH",      "Date mismatch",   "The portal's calendar does not take the date (start / end / rollover): check the dates in the file and on the portal"),
     ("CLAIM_ZERO_ALLOWED", "Zero allowed",    "Portal Maximum Allowed Claim is 0: check the loan on the portal"),
     ("MISMATCH",           "Mismatch",        "Branch Head check failed (claim no / IS / dates): not approved"),
     ("CLAIM_CHECK_PORTAL", "Check on portal", "Saved or CONFIRM clicked but the result is unknown: check the portal"),

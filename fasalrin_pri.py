@@ -67,7 +67,7 @@ SLACK_DAYS = 3                           # row choice: Sanction/Rollover Date wi
 COL_DISB, COL_REPAY, COL_MAXDIS, COL_PRI = "Disb. Date", "Repay. Date", "MAX(Dis_Amount)", "3% PRI"
 HEADER = ["Time", f.COL_ACCT, COL_DISB, "Claim No", "Sanction Date", "Start Date", "End Date", "Max Withdrawal",
           "Max Allowed Claim", COL_PRI, "PRI Claimed", "Result", f.COL_DETAIL]
-DONE = {"CLAIMED", "ALREADY_ON_PORTAL", "NOT_FOUND", "NO_MATCH", "NOT_ELIGIBLE"}
+DONE = {"CLAIMED", "ALREADY_ON_PORTAL", "NOT_FOUND", "NO_MATCH", "NOT_ELIGIBLE", "DATE_MISMATCH"}
 RECORDS_CSV = ""
 
 
@@ -228,7 +228,7 @@ def pick_nearest(page, inp, target: date) -> date:
     page.keyboard.press("Escape")
     page.wait_for_timeout(200)
     if not best:
-        raise RuntimeError(f"no selectable date near {target:%d/%m/%Y}")
+        raise f.DateMismatch(f"no selectable date near {target:%d/%m/%Y}")
     f.pick_calendar_date(page, inp, best)
     return best
 
@@ -510,6 +510,16 @@ def main(limit: int, assume_yes: bool, only: str = ""):
                     msg = str(e).splitlines()[0][:100]
                     shot(page, f"pri_error_{acct}")
                     print(f"\n    [exc] stage={stage['s']} {type(e).__name__}: {msg}", flush=True)
+                    if isinstance(e, f.DateMismatch) and stage["s"] not in ("draft", "submitting"):
+                        # the portal's calendar does not allow the date: hand work, never retried blindly
+                        errors += 1
+                        log(acct, disb_s, "DATE_MISMATCH", msg, **{COL_PRI: pri})
+                        print(f"{tag}  DATE_MISMATCH  {msg}", flush=True)
+                        try:
+                            _recover(page)
+                        except Exception:
+                            pass
+                        break
                     if stage["s"] in ("draft", "submitting"):     # saved / confirmed: never again blindly
                         errors += 1
                         print(f"{tag}  CLAIM_CHECK_PORTAL - check this claim on the portal by hand")
