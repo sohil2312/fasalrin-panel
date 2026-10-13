@@ -505,7 +505,7 @@ class Handler(BaseHTTPRequestHandler):
             from urllib.parse import unquote
             q = {k: unquote(v) for k, v in (x.split("=", 1) for x in self.path.partition("?")[2].split("&") if "=" in x)}
             name, fname = q.get("csv", ""), os.path.basename(q.get("file", ""))
-            if name not in input_csvs() or not branches.is_additional_list(ROOT / name):
+            if name not in input_csvs() or not branches.is_analysis_list(ROOT / name):
                 return self._send(404, {"error": "unknown list"})
             p = branches.analysis_dir(ROOT / name) / fname
             if not fname.startswith(Path(name).stem + "_") or not fname.endswith(".csv") or not p.exists():
@@ -593,8 +593,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, {"ok": True, **res})
         if self.path in ("/api/add_analysis", "/api/add_claim_these", "/api/add_queue_clear"):
             name = body.get("csv", "")
-            if name not in input_csvs() or not branches.is_additional_list(ROOT / name):
-                return self._send(400, {"error": "pick an IS additional work list"})
+            if name not in input_csvs() or not branches.is_analysis_list(ROOT / name):
+                return self._send(400, {"error": "pick an IS additional or IS claim work list"})
             if self.path != "/api/add_analysis" and running() and job.get("csv") == name:
                 return self._send(400, {"error": "a job is running on this work list: stop it first"})
             try:
@@ -674,7 +674,7 @@ class Handler(BaseHTTPRequestHandler):
                 try:                                  # what Match would do, before anything is written
                     with lock:
                         info = branches.report_info(branches.reports_dir(ROOT / name) / saved)
-                        pending = branches.is_additional_list(ROOT / name) and info["kind"] == "loan"
+                        pending = branches.is_analysis_list(ROOT / name) and info["kind"] == "loan"
                         preview = None if pending else branches.match_report(ROOT / name, saved, dry_run=True)
                 except (ValueError, KeyError, OSError) as e:
                     return self._send(400, {"error": str(e)[:240]})
@@ -683,7 +683,7 @@ class Handler(BaseHTTPRequestHandler):
             if running() and job.get("csv") == name:
                 return self._send(400, {"error": "a job is running on this work list: stop it first, then match"})
             rp = branches.reports_dir(ROOT / name) / os.path.basename(body.get("report", ""))
-            if branches.is_additional_list(ROOT / name) and rp.exists() and branches.report_info(rp)["kind"] == "loan":
+            if branches.is_analysis_list(ROOT / name) and rp.exists() and branches.report_info(rp)["kind"] == "loan":
                 return self._send(400, {"error": "this is the pending report: use it in Report analysis below"})
             try:
                 with lock:

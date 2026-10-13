@@ -1278,7 +1278,7 @@ function render(s) {
 // ---- IS additional report analysis ----
 let anaFor = null;
 function fillAna(c, reports) {
-  const on = listScheme(c) === "additional";
+  const on = ["additional", "isclaim"].includes(listScheme(c));
   $("anaBox").style.display = on ? "" : "none";
   if (!on) return;
   const opt = (r, pick) => `<option value="${esc(r.name)}"${pick ? " selected" : ""}>${esc(r.name)} · ${r.rows} rows · ${esc(r.time)}</option>`;
@@ -1296,8 +1296,8 @@ function anaCard(title, value, file, note) {
 }
 function showQueue(q) {
   $("anaQueue").textContent = q && q.accounts != null
-    ? `Claim list active: ${q.accounts} accounts (set ${q.time}) — File IS additional claims works only on these`
-    : "No claim list: File IS additional claims works on the whole work list";
+    ? `Claim list active: ${q.accounts} accounts (set ${q.time}) — the claim filing job works only on these`
+    : "No claim list: the claim filing job works on the whole work list";
 }
 $("anaBtn").onclick = async () => {
   $("anaMsg").className = "muted"; $("anaMsg").textContent = "analysing…";
@@ -1306,12 +1306,13 @@ $("anaBtn").onclick = async () => {
   const fl = r.files || {}, fy = Object.entries(r.pending_loan_fy || {}).map(([k, v]) => `${v} loans of ${k}`).join(", ");
   $("anaMsg").className = "";
   $("anaMsg").innerHTML = `Approved: <b>${esc(r.approved_report)}</b>` + (r.pending_report ? ` · Pending: <b>${esc(r.pending_report)}</b>` : " · no pending report");
+  const roll = r.rollover, other = roll === "YES" ? "NO (IS regular)" : "YES (IS additional)";
   let cards = [
     anaCard("In master (Int Sub Amt > 0)", r.master),
-    anaCard("Approved claims in report", r.approved_rows, "", `${r.approved_yes} rollover YES · ${r.approved_no} NO (IS regular)`),
-    anaCard("Rollover YES approved", r.approved_yes),
-    anaCard("Rollover YES matched with master", r.yes_matched, fl.approved_matched),
-    anaCard("Rollover YES not in master", r.yes_not_in_master, fl.approved_not_in_master),
+    anaCard("Approved claims in report", r.approved_rows, "", `${r.approved_yes} rollover ${roll} · ${r.approved_other} ${other}`),
+    anaCard(`Rollover ${roll} approved`, r.approved_yes),
+    anaCard(`Rollover ${roll} matched with master`, r.yes_matched, fl.approved_matched),
+    anaCard(`Rollover ${roll} not in master`, r.yes_not_in_master, fl.approved_not_in_master),
     anaCard("Left in master (not approved)", r.left, fl.left)];
   if (r.pending_report) cards = cards.concat([
     anaCard("Pending report rows", r.pending_rows, "", r.pending_used !== r.pending_rows
@@ -1320,9 +1321,10 @@ $("anaBtn").onclick = async () => {
     anaCard("Pending, already approved", r.pending_approved, fl.pending_approved),
     anaCard("Pending, other loan of the farmer", r.pending_other_loan, fl.pending_other_loan, "loan date not the master's Disb. Date"),
     anaCard("Pending, not in master", r.pending_not_in_master, fl.pending_not_in_master),
+    anaCard("Pending, Int Sub Amt 0 in master", r.pending_zero, fl.pending_zero, "nothing to claim"),
     anaCard("Left in master, not pending", r.left_not_pending, fl.left_not_pending)]);
   $("anaCards").innerHTML = cards.join("");
-  if (r.pending_report && r.pending_loan_fy && !r.pending_loan_fy["2024-25"] && r.pending_used)
+  if (r.scheme === "additional" && r.pending_report && r.pending_loan_fy && !r.pending_loan_fy["2024-25"] && r.pending_used)
     $("anaMsg").insertAdjacentHTML("beforeend", ` <span class="err">· The pending report has no 2024-25 loans (${esc(fy)}): it is the IS regular pending list. For IS additional take the portal's pending list with FY 2024-2025.</span>`);
   $("anaGo").style.display = r.pending_report ? "" : "none";
   $("anaClaim").textContent = `Claim these ${r.final}`;
@@ -1330,11 +1332,11 @@ $("anaBtn").onclick = async () => {
   showQueue(r.queue);
 };
 $("anaClaim").onclick = async () => {
-  if (!confirm("Mark the approved rollover claims as already on the portal, and let File IS additional claims work only on the 'to claim' list?")) return;
+  if (!confirm("Mark the approved claims as already on the portal, and let the claim filing job work only on the 'to claim' list?")) return;
   const r = await post("/api/add_claim_these", {csv: anaFor});
   if (r.error) { $("anaQueue").className = "err"; $("anaQueue").textContent = r.error; return; }
   $("anaQueue").className = "muted"; showQueue(r.queue);
-  $("anaQueue").textContent += ` · ${r.marked} marked already on portal. Now start File IS additional claims.`;
+  $("anaQueue").textContent += ` · ${r.marked} marked already on portal. Now start the claim filing job.`;
   poll();
 };
 $("anaClear").onclick = async () => {
@@ -1385,7 +1387,7 @@ $("repUpBtn").onclick = async () => {
   if (r.error) { $("repMsg").className = "err"; $("repMsg").textContent = r.error; refreshRep(); return; }
   $("repMsg").textContent = "";
   repPick = r.report;
-  if (listScheme(repFor) === "additional") {         // new report: refresh the analysis pickers
+  if (["additional", "isclaim"].includes(listScheme(repFor))) {   // new report: refresh the analysis pickers
     const rr = await (await fetch("/api/reports?csv=" + encodeURIComponent(repFor))).json();
     fillAna(repFor, rr.reports || []);
   }

@@ -1210,7 +1210,7 @@ def list_reports(csv_path) -> list[dict]:
                 info = report_info(p)
             except Exception as e:
                 info = {"kind": "unreadable", "rows": 0, "statuses": {}, "error": str(e)[:80]}
-            fits = info["kind"] == wants_kind(csv_path) or (scheme_of(csv_path) == "additional" and info["kind"] == "loan")
+            fits = info["kind"] == wants_kind(csv_path) or (is_analysis_list(csv_path) and info["kind"] == "loan")
             out.append({"name": p.name, "time": datetime.fromtimestamp(p.stat().st_mtime).strftime("%d-%m-%Y %H:%M"),
                         "size": p.stat().st_size, "fits": fits, **info})
     return out
@@ -1234,7 +1234,7 @@ def save_report(csv_path, name: str, data: bytes) -> str:
     except Exception as e:
         dest.unlink(missing_ok=True)
         raise ValueError(f"cannot read the report: {str(e)[:120]}")
-    if info["kind"] != wants_kind(csv_path) and not (scheme_of(csv_path) == "additional" and info["kind"] == "loan"):
+    if info["kind"] != wants_kind(csv_path) and not (is_analysis_list(csv_path) and info["kind"] == "loan"):
         dest.unlink(missing_ok=True)
         raise ValueError(f"this is a '{info['kind']}' report; this work list needs a '{wants_kind(csv_path)}' report")
     sol = sol_of(csv_path)
@@ -1305,26 +1305,39 @@ ANALYSIS_FILES = {   # key -> (file name part, what it is)
     "pending_other_loan": ("pending_other_loan", "Pending on the portal for another loan of the farmer"),
     "pending_approved": ("pending_already_approved", "Pending on the portal, but its rollover claim is approved"),
     "pending_not_in_master": ("pending_not_in_master", "Pending on the portal, not in the master"),
+    "pending_zero": ("pending_int_sub_zero", "Pending on the portal, Int Sub Amt 0 in the master"),
     "left_not_pending": ("left_not_pending", "Left in the master, not on the pending report"),
 }
 
 
+def is_analysis_list(csv_path) -> bool:
+    """Work lists with the report analysis: IS additional and IS regular claim (IS claim tab)."""
+    return is_additional_list(csv_path) or is_isclaim_list(csv_path)
+
+
 def analyse_additional(csv_path, approved_name: str, pending_name: str = "") -> dict:
-    """Counts for the cards + one CSV per list (downloadable). Writes nothing else."""
+    """Counts for the cards + one CSV per list (downloadable). Writes nothing else.
+    IS additional: approved = Is Rollover YES; a claim-format pending report -> its 2024-25 loans (Is Rollover NO).
+    IS regular claim list: approved = Is Rollover NO (2025-26 loans); pending = the portal's list of loans
+    waiting for their claim (loan-report format)."""
     csv_path = Path(csv_path)
+    regular = is_isclaim_list(csv_path)
+    roll = "NO" if regular else "YES"
     rd = reports_dir(csv_path)
     ap = rd / os.path.basename(approved_name or "")
     if not approved_name or not ap.exists():
         raise ValueError("pick the approved claims report")
     if report_info(ap)["kind"] != "claim IS":
         raise ValueError("the approved report must be the portal's IS Claim Application report (it has 'Is Rollover')")
-    work = [r for r in _additional_rows(csv_path)]
+    every = _isclaim_rows(csv_path) if regular else _additional_rows(csv_path)
+    zero = {(r.get(f.COL_ACCT) or "").strip() for r in every if _intsub(r) <= 0}
+    work = [r for r in every if _intsub(r) > 0]
     by = {(r.get(f.COL_ACCT) or "").strip(): r for r in work if (r.get(f.COL_ACCT) or "").strip()}
 
     appr = _report_rows(ap)
     yes = {}
     for r in appr:
-        if (str(r.get("Is Rollover") or "").strip().upper() == "YES"
+        if (str(r.get("Is Rollover") or "").strip().upper() == roll
                 and str(r.get("Application Status") or "").strip().lower() == "approved"):
             yes[_acct(r.get("Account Number"))] = r
     matched = [a for a in yes if a in by]
@@ -1338,18 +1351,21 @@ def analyse_additional(csv_path, approved_name: str, pending_name: str = "") -> 
         pend_rows, pend_name = _report_rows(pp), pp.name
     pend_total = len(pend_rows)
     if pend_rows and "Is Rollover" in pend_rows[0]:
-        # rollover pending report (IS claim report format): the 2024-25 loans whose IS claim is done
-        # (Is Rollover NO, loan FY 2024-2025) are the ones whose rollover (IS additional) is pending
+        # claim-report format. IS additional: the 2024-25 loans whose IS claim is done (Is Rollover NO,
+        # loan FY 2024-2025) are the ones whose rollover is pending. IS regular: its 2025-26 loan rows.
+        fy = "2025-2026" if regular else "2024-2025"
         pend_rows = [r for r in pend_rows if str(r.get("Is Rollover") or "").strip().upper() == "NO"
-                     and str(r.get("Loan application FY") or "").strip() == "2024-2025"]
+                     and str(r.get("Loan application FY") or "").strip() == fy]
     date_col = next((c for c in ("Loan Sanctioned Date", "Loan Disbursal Date", "Sanction Date", "Disb. Date")
                      if pend_rows and c in pend_rows[0]), None)
-    final, other, p_appr, p_not = [], [], [], []
+    final, other, p_appr, p_not, p_zero = [], [], [], [], []
     for r in pend_rows:
         a = _acct(r.get("Account Number") or r.get(f.COL_ACCT))
         if not a:
             continue
-        if a not in by:
+        if a in zero and a not in by:
+            p_zero.append((a, r))               # in the master, but Int Sub Amt 0: nothing to claim
+        elif a not in by:
             p_not.append((a, r))
         elif a in yes:
             p_appr.append((a, r))
@@ -1388,6 +1404,7 @@ def analyse_additional(csv_path, approved_name: str, pending_name: str = "") -> 
                       "pending_other_loan": save("pending_other_loan", [], other) if other else "",
                       "pending_approved": save("pending_approved", [], p_appr) if p_appr else "",
                       "pending_not_in_master": save("pending_not_in_master", [], p_not) if p_not else "",
+                      "pending_zero": save("pending_zero", [], p_zero) if p_zero else "",
                       "left_not_pending": save("left_not_pending", left_not_pending)})
     import json
     (out / f"{csv_path.stem}_final.json").write_text(json.dumps({
@@ -1398,9 +1415,10 @@ def analyse_additional(csv_path, approved_name: str, pending_name: str = "") -> 
         d = _any_date(r.get(date_col)) if date_col else None
         if d:
             pend_fy[f"{d.year}-{(d.year + 1) % 100:02d}" if d.month >= 4 else f"{d.year - 1}-{d.year % 100:02d}"] += 1
-    return {"approved_report": ap.name, "pending_report": pend_name,
+    return {"approved_report": ap.name, "pending_report": pend_name, "scheme": "isclaim" if regular else "additional",
+            "rollover": roll, "pending_zero": len(p_zero),
             "master": len(by), "approved_rows": len(appr), "approved_yes": len(yes),
-            "approved_no": sum(1 for r in appr if str(r.get("Is Rollover") or "").strip().upper() == "NO"),
+            "approved_other": sum(1 for r in appr if str(r.get("Is Rollover") or "").strip().upper() not in ("", roll)),
             "yes_matched": len(matched), "yes_not_in_master": len([a for a in yes if a not in by]),
             "left": len(left), "pending_rows": len(pend_rows) if not pend_name else pend_total,
             "pending_used": len(pend_rows), "final": len(final), "pending_other_loan": len(other),

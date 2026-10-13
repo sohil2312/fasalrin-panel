@@ -137,10 +137,16 @@ def work_list():
     f.INPUT_CSV = f.OUTPUT_CSV
     header, rows, idx = f.load_rows()
     if is_claim_list(f.OUTPUT_CSV):              # IS regular claim file: every account of the branch
+        queue = None                             # report analysis "Claim these": only those accounts
+        qp = os.path.splitext(f.OUTPUT_CSV)[0] + "_queue.csv"
+        if os.path.exists(qp):
+            with open(qp, newline="", encoding="utf-8-sig") as fh:
+                queue = {(e.get(f.COL_ACCT) or "").strip() for e in csv.DictReader(fh)}
+            print(f"[queue] {len(queue)} accounts from the report analysis (left in the master AND pending on the portal)")
         out = []
         for r in rows[1:]:
             acct = r[idx[f.COL_ACCT]].strip()
-            if acct:
+            if acct and (queue is None or acct in queue):
                 out.append((acct, "", money_to_float(r[idx[COL_INTSUB]]) if COL_INTSUB in idx else 0.0,
                             r[idx[f.COL_DISB]].strip() if f.COL_DISB in idx else ""))
         return header, rows, idx, out
