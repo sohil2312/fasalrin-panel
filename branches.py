@@ -54,11 +54,170 @@ REGULAR_REQUIRED = [*MASTER_COLS.values(), f.COL_ACCT, f.COL_AADH, f.COL_DISB, f
 ADDITIONAL_REQUIRED = ["Sol ID", "Branch Name", f.COL_ACCT, "Int Sub Amt"]   # IS additional: no Status column
 
 
+# ----------------------------------------------------------------------------
+# column mapping: a master with other headings is used through a mapping the user picks in the panel
+# (dropdown per field, then Confirm). Saved next to the master as <file>.map.json; the claim steps never change.
+# ----------------------------------------------------------------------------
+SOL_FROM_ACCT = "@acct4"                         # Sol ID = first 4 digits of the account number
+MAP_FIELDS = {   # kind -> [(field, required, kind of value, other headings it may have)]
+    "additional": [
+        ("Sol ID", True, "sol", ["Sol ID", "SOL", "Sol", "Sol Id", "SOL ID"]),
+        ("Branch Name", True, "text", ["Branch Name", "Branch", "BRANCH NAME"]),
+        (f.COL_ACCT, True, "digits", ["Account No.", "Account Number", "Account No", "Acct No", "A/C No"]),
+        ("Int Sub Amt", True, "money", ["Int Sub Amt", "Int Sub", "IS Amount", "Applicable IS amount (INR)",
+                                        "Interest Subvention"]),
+        ("Disb. Date", True, "date", ["Disb. Date", "Disb Date", "Disbursal Date", "Loan Disbursal Date"]),
+        ("Repay. Date", True, "date", ["Repay. Date", "Repay Date", "Repayment Date", "Loan Repayment Date"]),
+    ],
+}
+
+
+def map_path(master) -> Path:
+    p = Path(master)
+    return p.with_name(p.name + ".map.json")
+
+
+def load_map(master) -> dict:
+    import json
+    p = map_path(master)
+    try:
+        return json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _norm_head(h: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", (h or "").lower())
+
+
+def master_headers(master) -> tuple[list[str], dict]:
+    """(headings of the data sheet, {heading: up to 3 sample values}) - the sheet with the most filled headings."""
+    import openpyxl
+    wb = openpyxl.load_workbook(master, read_only=True, data_only=True)
+    best, samples = [], {}
+    try:
+        for ws in wb.worksheets:
+            it = ws.iter_rows(values_only=True)
+            head = None
+            for n, r in enumerate(it):
+                if sum(1 for c in r if c not in (None, "")) >= 4:
+                    head = [_cell(c) for c in r]
+                    break
+                if n > 20:
+                    break
+            if head and len([h for h in head if h]) > len([h for h in best if h]):
+                best = head
+                samples = {h: [] for h in head if h}
+                for r in it:
+                    for h, v in zip(head, r):
+                        if h and v not in (None, "") and len(samples[h]) < 3:
+                            samples[h].append(_cell(v)[:30])
+                    if all(len(v) >= 3 for v in samples.values()):
+                        break
+    finally:
+        wb.close()
+    return [h for h in best if h], samples
+
+
+def suggest_map(kind: str, headers: list[str]) -> dict:
+    """field -> best guess heading (same name, then one of its other names), '' if none."""
+    by = {_norm_head(h): h for h in headers}
+    out = {}
+    for field, _req, vk, names in MAP_FIELDS.get(kind, []):
+        out[field] = next((by[_norm_head(n)] for n in [field, *names] if _norm_head(n) in by), "")
+        if not out[field] and vk == "sol":
+            out[field] = SOL_FROM_ACCT
+    return out
+
+
+def save_map(kind: str, master, mapping: dict) -> dict:
+    """Check and save the mapping the user confirmed; returns it."""
+    import json
+    headers, _ = master_headers(master)
+    clean = {}
+    for field, req, vk, _names in MAP_FIELDS.get(kind, []):
+        src = (mapping.get(field) or "").strip()
+        if src == SOL_FROM_ACCT and vk == "sol":
+            clean[field] = src
+        elif src in headers:
+            clean[field] = src
+        elif req:
+            raise ValueError(f"pick a column for '{field}'")
+    used = [v for v in clean.values() if v != SOL_FROM_ACCT]
+    if len(used) != len(set(used)):
+        raise ValueError("one column is picked for two fields")
+    fc, fv = (mapping.get("_filter_col") or "").strip(), (mapping.get("_filter_val") or "").strip()
+    if fc:                                       # optional: only rows where this column has this value
+        if fc not in headers or not fv:
+            raise ValueError("row filter: pick a column and type its value")
+        clean["_filter_col"], clean["_filter_val"] = fc, fv
+    map_path(master).write_text(json.dumps(clean, indent=1), encoding="utf-8")
+    _cache.clear()
+    return clean
+
+
+def _to_dmy(v: str) -> str:
+    """Dates from any file -> dd-mm-yyyy: Excel serial numbers (45404.23), yyyy-mm-dd, dd/mm/yyyy."""
+    s = (v or "").strip()
+    if re.fullmatch(r"\d{5}(\.\d+)?", s):
+        from datetime import timedelta
+        return (date(1899, 12, 30) + timedelta(days=int(float(s)))).strftime("%d-%m-%Y")
+    m = re.match(r"(\d{4})-(\d{1,2})-(\d{1,2})", s)
+    if m:
+        return f"{int(m.group(3)):02d}-{int(m.group(2)):02d}-{m.group(1)}"
+    m = re.fullmatch(r"(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})", s)
+    return f"{int(m.group(1)):02d}-{int(m.group(2)):02d}-{m.group(3)}" if m else s
+
+
+def _mapped(rows: list[dict], mp: dict, kind_of: dict) -> list[dict]:
+    """Rows with the mapped fields set (the file's own columns are kept as well)."""
+    out = []
+    for r in rows:
+        r = dict(r)
+        for field, src in mp.items():
+            if src == SOL_FROM_ACCT or field.startswith("_"):
+                continue
+            v = r.get(src, "")
+            vk = kind_of.get(field)
+            if vk == "date":
+                v = _to_dmy(v)
+            elif vk == "digits":
+                v = re.sub(r"\.0$", "", v.strip())
+            r[field] = v
+        if mp.get("Sol ID") == SOL_FROM_ACCT:
+            r["Sol ID"] = re.sub(r"\D", "", r.get(f.COL_ACCT, ""))[:4]
+        out.append(r)
+    return out
+
+
 def read_master(path, required=None) -> list[dict]:
     """All rows of the master. The sheet used is the first whose header row (first row with >= 4 filled
     cells) has every `required` column, e.g. the IS additional file keeps its data in Sheet1 after a
-    Sheet3 summary."""
+    Sheet3 summary. A master with a confirmed column mapping (<file>.map.json) is read through it."""
     required = required or REGULAR_REQUIRED
+    path = Path(path)
+    mp = load_map(path)
+    if mp:
+        kind_of = {fl: vk for k in MAP_FIELDS.values() for fl, _r, vk, _n in k}
+        src_req = [v for k, v in mp.items() if v != SOL_FROM_ACCT and not k.startswith("_")]
+        missing = [c for c in required if c not in mp]
+        if missing:
+            raise ValueError("column mapping has no column for: " + ", ".join(missing))
+        key = (str(path), path.stat().st_mtime, map_path(path).stat().st_mtime, tuple(required))
+        if key not in _cache:
+            rows = read_master_raw(path, src_req + ([mp["_filter_col"]] if mp.get("_filter_col") else []))
+            if mp.get("_filter_col"):                # only rows where that column = the value (any case)
+                rows = [r for r in rows if (r.get(mp["_filter_col"]) or "").strip().lower()
+                        == mp["_filter_val"].strip().lower()]
+            rows = _mapped(rows, mp, kind_of)
+            if len(_cache) > 3:
+                _cache.clear()
+            _cache[key] = rows
+        return _cache[key]
+    return read_master_raw(path, required)
+
+
+def read_master_raw(path, required) -> list[dict]:
     path = Path(path)
     key = (str(path), path.stat().st_mtime, tuple(required))
     if key in _cache:
