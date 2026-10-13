@@ -258,6 +258,9 @@
   .tab[hidden] { display: none !important; }
   .anaPick { display: grid; grid-template-columns: 1fr 1fr auto; gap: 12px; align-items: end; }
   .anaPick select { width: 100%; margin-top: 4px; }
+  .anaVenn { display: flex; gap: 18px; flex-wrap: wrap; margin-top: 12px; }
+  .anaVenn svg { width: 300px; max-width: 100%; height: auto; }
+  .anaVenn text { fill: var(--ink); font-family: inherit; }
   @media (max-width: 760px) { .anaPick { grid-template-columns: 1fr; } }
   .tab { position: relative; z-index: 0; border: 0; border-radius: 999px; background: none; color: var(--ink);
          text-transform: none; letter-spacing: 0; padding: 8px 18px 6px; font-weight: 700; }
@@ -632,6 +635,7 @@
         </div>
         <div class="muted" id="anaMsg">Upload the approved IS claims report and the portal's pending report above, pick them here, then Analyse.</div>
         <div class="stats anaCards" id="anaCards" style="margin-top:10px"></div>
+        <div class="anaVenn" id="anaVenn"></div>
         <div class="row" id="anaGo" style="display:none">
           <button class="primary" id="anaClaim">Claim these</button>
           <button id="anaClear">Clear claim list</button>
@@ -1306,11 +1310,26 @@ function fillAna(c, reports) {
     : '<option value="">— upload the approved IS claims report —</option>';
   $("anaPend").innerHTML = '<option value="">— no pending report —</option>' + pend.map(r => opt(r, false)).join("");
   $("anaBtn").disabled = !appr.length;
-  if (anaFor !== c) { anaFor = c; $("anaCards").innerHTML = ""; $("anaGo").style.display = "none"; }
+  if (anaFor !== c) { anaFor = c; $("anaCards").innerHTML = ""; $("anaVenn").innerHTML = ""; $("anaGo").style.display = "none"; }
 }
 function anaCard(title, value, file, note) {
   const link = file ? `<a href="/download_analysis?csv=${encodeURIComponent(anaFor)}&file=${encodeURIComponent(file)}">↓ list</a>` : "";
   return `<div class="stat"><b>${esc(value)}</b><span>${esc(title)}</span>${note ? `<small class="muted">${esc(note)}</small>` : ""}${link}</div>`;
+}
+// small Venn diagram: two sets, the counts only in A, in both, only in B (circles not to scale)
+function venn(title, aName, bName, aOnly, both, bOnly, note) {
+  const n = v => esc(String(v ?? 0));
+  return `<svg viewBox="0 0 300 182" role="img" aria-label="${esc(title)}: ${esc(aName)} only ${n(aOnly)}, both ${n(both)}, ${esc(bName)} only ${n(bOnly)}">
+    <text x="150" y="16" text-anchor="middle" font-size="13" font-weight="700">${esc(title)}</text>
+    <circle cx="112" cy="90" r="62" fill="var(--info-soft)" fill-opacity=".85" stroke="var(--edge)" stroke-width="2"/>
+    <circle cx="188" cy="90" r="62" fill="var(--good-soft)" fill-opacity=".7" stroke="var(--edge)" stroke-width="2"/>
+    <text x="80" y="96" text-anchor="middle" font-size="17" font-weight="800">${n(aOnly)}</text>
+    <text x="150" y="96" text-anchor="middle" font-size="17" font-weight="800">${n(both)}</text>
+    <text x="220" y="96" text-anchor="middle" font-size="17" font-weight="800">${n(bOnly)}</text>
+    <text x="150" y="112" text-anchor="middle" font-size="10">${esc(note)}</text>
+    <text x="96" y="172" text-anchor="middle" font-size="11" font-weight="600">${esc(aName)}</text>
+    <text x="204" y="172" text-anchor="middle" font-size="11" font-weight="600">${esc(bName)}</text>
+  </svg>`;
 }
 function showQueue(q) {
   $("anaQueue").textContent = q && q.accounts != null
@@ -1342,6 +1361,12 @@ $("anaBtn").onclick = async () => {
     anaCard("Pending, Int Sub Amt 0 in master", r.pending_zero, fl.pending_zero, "nothing to claim"),
     anaCard("Left in master, not pending", r.left_not_pending, fl.left_not_pending)]);
   $("anaCards").innerHTML = cards.join("");
+  let vs = venn("Master vs approved report", `Master ${r.master}`, `Approved ${roll} ${r.approved_yes}`,
+                r.left, r.yes_matched, r.yes_not_in_master, "approved");
+  if (r.pending_report)
+    vs += venn("Left in master vs pending report", `Left in master ${r.left}`, `Pending used ${r.pending_used}`,
+               r.left_not_pending, r.final, Math.max(0, (r.pending_used || 0) - (r.final || 0)), "to claim");
+  $("anaVenn").innerHTML = vs;
   if (r.scheme === "additional" && r.pending_report && r.pending_loan_fy && !r.pending_loan_fy["2024-25"] && r.pending_used)
     $("anaMsg").insertAdjacentHTML("beforeend", ` <span class="err">· The pending report has no 2024-25 loans (${esc(fy)}): it is the IS regular pending list. For IS additional take the portal's pending list with FY 2024-2025.</span>`);
   $("anaGo").style.display = r.pending_report ? "" : "none";
