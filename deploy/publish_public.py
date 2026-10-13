@@ -42,13 +42,18 @@ def main() -> int:
         if p.name != ".git":
             shutil.rmtree(p) if p.is_dir() else p.unlink()
     tar = tarfile.open(fileobj=io.BytesIO(git("archive", "--format=tar", "HEAD", out=True)))
+    executable = []
     for m in tar.getmembers():
         if m.isfile() and not m.name.startswith(SKIP):
             dst = CLONE / m.name
             dst.parent.mkdir(parents=True, exist_ok=True)
             dst.write_bytes(tar.extractfile(m).read())
+            if m.mode & 0o111:
+                executable.append(m.name)
 
     git("add", "-A", cwd=CLONE)
+    for name in executable:                       # keep the executable bit (Windows checkouts lose it on disk)
+        git("update-index", "--chmod=+x", name, cwd=CLONE)
     if not git("status", "--porcelain", cwd=CLONE).strip():
         print(f"[public] already up to date with {head}")
         return 0

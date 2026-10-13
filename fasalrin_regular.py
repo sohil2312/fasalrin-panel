@@ -522,10 +522,16 @@ def validation_msgs(page) -> str:
 def wait_pane(page, n: int, seconds=STUCK_TIMEOUT_S, retry_btn=None):
     """Wait for tab pane n. Portal 'Warning: ... Please verify' modals are acknowledged with OK
     (then retry_btn, e.g. SAVE & CONTINUE, is clicked again if the pane still hasn't changed)."""
-    state = {"warned": 0}
+    state = {"warned": 0, "off": None}
     def ready():
         if active_pane(page) == f"formTabs-tabpane-{n}":
             return "ok"
+        if "/loan-application-form" not in page.url:     # the portal jumped to the list / welcome page
+            state["off"] = state["off"] or time.time()
+            if time.time() - state["off"] > 4:
+                return "left:" + page.url.rsplit("/", 1)[-1]
+        else:
+            state["off"] = None
         mt = modal_text(page)
         # "Primary Activity is 'Animal Husbandry' Please enter an activity under 'Animal Husbandry' to proceed."
         sm = re.search(r"Primary Activity is .{0,80}?Please enter an activity under [^.]{0,80}", mt or "", re.I) \
@@ -546,6 +552,8 @@ def wait_pane(page, n: int, seconds=STUCK_TIMEOUT_S, retry_btn=None):
             return "validation:" + v
         return None
     r = wait_for(page, ready, seconds, f"tab pane {n}")
+    if r.startswith("left:"):                          # stuck: reload + retry the row (logged out -> login prompt)
+        raise StuckError(f"portal left the form for '{r[5:]}' while waiting for tab {n}")
     if r != "ok":
         raise RuntimeError(f"portal {r}")
     page.wait_for_timeout(300)
@@ -716,6 +724,99 @@ def ensure_primary_activity(page, want: str | None = None):
     print(f"\n    primary activity {cur or 'blank'!r} -> {target}", flush=True)
 
 
+RES_STATE, RES_DISTRICT = "GUJARAT", "Mahisagar"   # every block of our branches is in Mahisagar on the portal
+
+
+def fill_residence(page, land: dict | None) -> str:
+    """Applicant tab: the residence fields the portal left empty (existing farmers with no state / district / village)
+    are filled from the master's ADDRESS: state GUJARAT, district Mahisagar, block and village from the address,
+    street address, pincode. Fields already filled or locked are left alone; everything is read back.
+    Returns '' when nothing was missing or all of it was filled, else why not (the row then stays hand work)."""
+    import fasalrin_fresh as fr
+    p1 = pane(page, 1)
+    names = ["stateId", "districtId", "resSubDistrictId", "resVillageId", "resAddress", "resPincode"]
+    if not p1.locator('select[name="stateId"]').count():
+        return ""
+    empty = lambda n: (fr.form_values(p1, [n]).get(n) or "").strip().lower() in ("", "select")
+    todo = [n for n in names if empty(n) and n not in fr.locked_names(p1, [n])]
+    if not todo:
+        return ""
+    address = ((land or {}).get("address") or "").strip()
+    branch = (land or {}).get("branch", "")
+    if not address or address.startswith("#"):
+        return "applicant tab has no state / district / village and the master has no ADDRESS"
+    want = {}
+    if "stateId" in todo:
+        fr.select_label(p1, "stateId", RES_STATE, page, wait_options=15)
+        want["stateId"] = RES_STATE
+    if "districtId" in todo or "stateId" in todo:
+        fr.select_label(p1, "districtId", RES_DISTRICT, page, wait_options=15)
+        want["districtId"] = RES_DISTRICT
+    blk = fr.form_values(p1, ["resSubDistrictId"]).get("resSubDistrictId", "")
+    if empty("resSubDistrictId"):
+        blk = fr.pick_block(page, p1, "resSubDistrictId", branch, address)
+        want["resSubDistrictId"] = blk
+    if empty("resVillageId"):
+        wait_for(page, lambda: len(fr.options_of(p1, "resVillageId")) > 1, 10, "residence villages")
+        opts = fr.options_of(p1, "resVillageId")
+        try:
+            import villages                            # the dashboard checks villages with the saved list
+            villages.save(blk, opts, branch)
+        except ImportError:
+            pass
+        v = fr.match_village(address, opts, fr.address_candidates(address, f"{branch}|{blk}"))
+        if not v:
+            return f"applicant tab: no village of block {blk} found in ADDRESS {address[:60]!r}"
+        fr.select_label(p1, "resVillageId", v, page)
+        want["resVillageId"] = v
+    if empty("resAddress"):
+        ad = p1.locator('input[name="resAddress"]').first
+        maxlen = int(ad.get_attribute("maxlength") or 0)
+        text = address[:maxlen] if maxlen else address
+        fr.fill_text(page, ad, text)
+        want["resAddress"] = text
+    if empty("resPincode"):
+        pins = re.findall(r"\b(\d{6})\b", address)
+        if not pins:                                   # the branch's usual pincode (its other addresses)
+            allp = collections.Counter(x for a in fr.BRANCH_ADDRESSES.get(fr.norm(branch), [])
+                                       for x in re.findall(r"\b(\d{6})\b", a))
+            pins = [allp.most_common(1)[0][0]] if allp else []
+        if pins:
+            fr.fill_text(page, p1.locator('input[name="resPincode"]').first, pins[-1])
+            want["resPincode"] = pins[-1]
+    fr.check_form(page, p1, want, "applicant residence")
+    print(f"\n    residence filled from ADDRESS: {', '.join(f'{k}={v}' for k, v in want.items() if k != 'resAddress')}", flush=True)
+    return ""
+
+
+def ensure_account(page, acct: str) -> str:
+    """Account tab: the boxes show our account (nothing to do), or they are empty (a farmer the portal knows, linked to
+    this loan account for the first time: fill account + confirm + SINGLE holder), or they show another account
+    (-> '' is not returned: the reason, and the row stops; an account is never overwritten)."""
+    import fasalrin_fresh as fr
+    p2 = pane(page, 2)
+    if not p2.locator('input[name="accountNumber"]').count():
+        return ""
+    shown = re.sub(r"\D", "", fr.form_values(p2, ["accountNumber"]).get("accountNumber") or "")
+    if shown and (shown == acct or (len(shown) < len(acct) and acct.endswith(shown[-4:]))):
+        return ""                                      # ours (possibly masked)
+    if shown:
+        return f"account tab shows another account (ending {shown[-4:]}): not changed, do by hand"
+    fr.fill_text(page, p2.locator('input[name="accountNumber"]').first, acct)
+    if p2.locator('input[name="confirmAccountNumber"]').count():
+        fr.fill_text(page, p2.locator('input[name="confirmAccountNumber"]').first, acct)
+    want = {"accountNumber": acct}
+    if p2.locator('input[name="confirmAccountNumber"]').count():
+        want["confirmAccountNumber"] = acct
+    if p2.locator('select[name="accountHolder"]').count() and \
+            (fr.form_values(p2, ["accountHolder"]).get("accountHolder") or "").lower() in ("", "select"):
+        fr.select_label(p2, "accountHolder", "SINGLE", page)
+        want["accountHolder"] = "SINGLE"
+    fr.check_form(page, p2, want, "account tab")
+    print(f"\n    account tab: linked account {acct} to this farmer", flush=True)
+    return ""
+
+
 # ----------------------------------------------------------------------------
 # process one CSV row -> (status, drawing_limit_entered, app_no, detail)
 # ----------------------------------------------------------------------------
@@ -782,7 +883,7 @@ def add_activity(page, act, scheme: str, activity: str, land: dict, dp: int, ope
                "liveStockCode": lambda: fr.select_label(act, "liveStockCode", fr.AH_ANIMAL, page),
                "unitCount": lambda: fr.fill_text(page, act.locator('input[name="unitCount"]').first, fr.AH_UNITS)}
     try:
-        v = fr.find_location(page, land["address"], land.get("branch", ""), cands)
+        v = fr.find_location(page, land["address"], land.get("branch", ""), address=land["address"], from_address=True)
     except fr.VillageError:
         return f"village not found in the portal list from ADDRESS {land['address'][:70]!r}: add activity by hand"
     print(f"\n    activity added: {activity}, village {v}", flush=True)
@@ -797,8 +898,14 @@ def process_row(page, acct: str, aadhaar: str, disb: date, dp: int, stage: dict,
                 scheme: str = "", land: dict | None = None):
     activity = SCHEME_ACTIVITY.get((scheme or "").strip().upper())
     stage["s"] = "start"
-    open_fetch_popup(page)
-    res = fetch_record(page, aadhaar)
+    for attempt in range(3):                      # 'Something went wrong. Please try again': OK, fetch again
+        open_fetch_popup(page)
+        res = fetch_record(page, aadhaar)
+        if not (res.startswith("other:") and re.search(r"went wrong|try again|error occ", res, re.I)):
+            break
+        print(f"\n    portal: {res[6:60]} -> OK, fetch again ({attempt + 1}/3)", flush=True)
+        dismiss_ok_dialogs(page)
+        page.wait_for_timeout(2000)
     stage["s"] = "fetched"
 
     if res == "invalid_aadhaar":                  # portal: "Please enter valid Aadhaar Number"
@@ -819,16 +926,33 @@ def process_row(page, acct: str, aadhaar: str, disb: date, dp: int, stage: dict,
         raise RuntimeError(f"unexpected FETCH response: {res}")
 
     picked = choose_account(page, acct)
-    if picked is None:
-        shot(page, f"noacctlist_{acct}")
-        page.locator('.modal-content:visible button', has_text=BTN("BACK TO DASHBOARD")).first.click()
-        page.wait_for_timeout(800)
-        return "NO_ACCT_DROPDOWN", "", "", "farmer exists but popup has no account list: do by hand"
     if not picked:
-        page.locator('.modal-content:visible button', has_text=BTN("BACK TO DASHBOARD")).first.click()
-        page.wait_for_timeout(800)
-        return "ACCT_NOT_IN_DROPDOWN", "", "", "csv account not offered for this aadhaar"
-    page.locator('.modal-content:visible button', has_text=BTN("OK")).first.click()
+        # 'Beneficiary details exist in the system' without our account: OK opens the application for this farmer,
+        # the Account tab then takes our account number (ensure_account). OK not opening the form -> by hand as before.
+        status = "NO_ACCT_DROPDOWN" if picked is None else "ACCT_NOT_IN_DROPDOWN"
+        ok = page.locator('.modal-content:visible button', has_text=BTN("OK"))
+        opened = False
+        if ok.count():
+            print(f"\n    Beneficiary details exist ({'no account list' if picked is None else 'account not in its list'})"
+                  f" -> OK, account {acct} goes on the Account tab", flush=True)
+            ok.first.click()
+            try:
+                wait_for(page, lambda: active_pane(page) == "formTabs-tabpane-1", 10, "application form after OK")
+                opened = True
+            except StuckError:
+                pass
+        if not opened:
+            shot(page, f"noacctlist_{acct}")
+            back = page.locator('.modal-content:visible button', has_text=BTN("BACK TO DASHBOARD"))
+            if back.count():
+                back.first.click()
+            else:
+                click_side_nav(page, "/dashboard")
+            page.wait_for_timeout(800)
+            return status, "", "", ("farmer exists but popup has no account list" if picked is None
+                                    else "csv account not offered for this aadhaar") + ": OK did not open the form, do by hand"
+    else:
+        page.locator('.modal-content:visible button', has_text=BTN("OK")).first.click()
 
     # ---- 1. Applicant Details ----
     wait_pane(page, 1)
@@ -848,7 +972,11 @@ def process_row(page, acct: str, aadhaar: str, disb: date, dp: int, stage: dict,
             break
     at.dispatch_event("change")
     ensure_primary_activity(page, activity)
-    pane(page, 1).locator("button", has_text=BTN("UPDATE & CONTINUE")).first.click()
+    try:                                              # no state / district / village on the portal: from ADDRESS
+        res_note = fill_residence(page, land)
+    except RuntimeError as e:                         # (StuckError too) the portal refused a value: hand work, with why
+        res_note = f"applicant residence from ADDRESS failed: {str(e)[:110]}"
+    pane(page, 1).locator("button", has_text=BTN("(?:UPDATE|SAVE) & CONTINUE")).first.click()
     stage["s"] = "applicant"
 
     # ---- 2. Account Details ----
@@ -865,9 +993,15 @@ def process_row(page, acct: str, aadhaar: str, disb: date, dp: int, stage: dict,
             shot(page, f"applicant_{acct}")
             click_side_nav(page, "/dashboard")
             page.wait_for_timeout(800)
-            return "APPLICANT_INCOMPLETE", "", "", "applicant tab: " + str(e)[len("portal validation:"):][:120]
+            return "APPLICANT_INCOMPLETE", "", "", (res_note or "applicant tab: " + str(e)[len("portal validation:"):])[:150]
         raise
-    pane(page, 2).locator("button", has_text=BTN("UPDATE & CONTINUE")).first.click()
+    why = ensure_account(page, acct)               # a farmer linked to this account for the first time
+    if why:
+        shot(page, f"account_{acct}")
+        click_side_nav(page, "/dashboard")
+        page.wait_for_timeout(800)
+        return "ACCT_NOT_IN_DROPDOWN", "", "", why
+    pane(page, 2).locator("button", has_text=BTN("(?:UPDATE|SAVE) & CONTINUE")).first.click()
     stage["s"] = "account"
 
     # ---- 3. Financial Details ----
@@ -1098,6 +1232,12 @@ def main():
           + (f", {restored} rows restored into the CSV" if restored else ", CSV already up to date"))
     if restored:
         save_rows(header, rows)
+
+    import fasalrin_fresh as fr                       # the branch's usual block, for addresses that name none
+    for r in rows[1:]:
+        land = land_of(r, idx)
+        if land.get("address"):
+            fr.BRANCH_ADDRESSES.setdefault(fr.norm(land.get("branch", "")), []).append(land["address"])
 
     def finish(r):
         """Row result -> progress file (first, fsync'd), then the CSV."""

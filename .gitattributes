@@ -1,2 +1,4 @@
 # shell scripts run on Linux (Oracle server): always LF
 *.sh text eol=lf
+# macOS start file: always LF
+*.command text eol=lf

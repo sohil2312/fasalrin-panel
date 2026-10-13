@@ -214,9 +214,9 @@ def address_candidates(addr: str, branch: str = "") -> list[tuple[str, bool]]:
     toks = re.findall(r"[A-Z]+|,", re.sub(r"[^A-Z,]", " ", s))
     if not toks or toks[0] == "NA":
         return []
-    blk = norm(branch)
+    blks = [norm(x) for x in (branch or "").split("|") if norm(x)]    # branch | block: neither is the village
     def junk(t):                                       # block name, or a piece of a long stop word ('GUJARA', 'AHALS')
-        return t in ADDR_NOT_ALONE or (len(t) >= 4 and blk and (blk.startswith(t) or t.startswith(blk))) or             any(len(w) >= 6 and w != t and (w.startswith(t) or w.endswith(t)) for w in ADDR_STOP)
+        return t in ADDR_NOT_ALONE or (len(t) >= 4 and any(b.startswith(t) or t.startswith(b) for b in blks)) or             any(len(w) >= 6 and w != t and (w.startswith(t) or w.endswith(t)) for w in ADDR_STOP)
 
     def phrase(i):                                     # words from i up to the next stop word / comma
         out = []
@@ -469,20 +469,56 @@ def block_of(branch: str, options: list[str]) -> str | None:
     return max(hits, key=lambda o: len(norm(o))) if hits else None
 
 
-def pick_block(page, scope, name: str, branch: str) -> str:
+def block_from_address(address: str, options: list[str]) -> str | None:
+    """The block the farmer's address names: 'TA LUNAWADA' and the bank's 'VILLAGE,TALUKA,BLOCK,DISTRICT' part count
+    most ('KANELA,LUNAWADA,LUNAWADA,PANCH MAHALS' -> Lunawada). A branch is not a block (Kidia farmers are in Lunawada)."""
+    opts = [o for o in options if o and o.strip().lower() != "select" and norm(o)]
+    s = (address or "").upper()
+    toks = re.findall(r"[A-Z]+", s)
+    score = collections.Counter()
+    for o in opts:
+        no = norm(o)
+        for i, t in enumerate(toks):
+            if t == no or (len(t) >= 5 and len(no) >= 5 and (t.startswith(no) or f.same_branch(t, o)) and abs(len(t) - len(no)) <= 3):
+                score[o] += 3 if i and toks[i - 1] in ("TA", "TAL", "TALUKA", "TQ") else 1
+        for part in s.split(","):                       # a whole comma part equal to the block name
+            if norm(part) == no:
+                score[o] += 2
+    if not score:
+        return None
+    top = score.most_common(2) + [(None, 0)]
+    return top[0][0] if top[0][1] > top[1][1] else None  # a tie: not sure -> the branch decides
+
+
+BRANCH_ADDRESSES: dict[str, list[str]] = {}   # set by a run at its start: every address of the branch's list
+
+
+def usual_block(branch: str, options: list[str]) -> str | None:
+    """The block most of the branch's addresses name (for an address that names none: Kidia -> Lunawada)."""
+    c = collections.Counter(b for a in BRANCH_ADDRESSES.get(norm(branch), []) for b in [block_from_address(a, options)] if b)
+    return c.most_common(1)[0][0] if c else None
+
+
+def pick_block(page, scope, name: str, branch: str, address: str = "") -> str:
+    """Block from the farmer's address, else from the branch name (Kadanagam -> Kadana)."""
     wait_for(page, lambda: len(options_of(scope, name)) > 1, 10, f"{name} options")
-    blk = block_of(branch, options_of(scope, name))
+    opts = options_of(scope, name)
+    blk = (block_from_address(address, opts) if address else None) or block_of(branch, opts) or usual_block(branch, opts)
     if not blk:
-        raise RuntimeError(f"no block in the portal list for branch {branch!r}")
+        raise RuntimeError(f"no block for branch {branch!r}: the address names none of "
+                           f"{', '.join(o for o in opts if o.lower() != 'select')[:120]}")
     select_label(scope, name, blk, page)
     return blk
 
 
-def find_location(page, village: str, branch: str, cands: list[tuple[str, bool]] | None = None) -> str:
+def find_location(page, village: str, branch: str, cands: list[tuple[str, bool]] | None = None,
+                  address: str = "", from_address: bool = False) -> str:
     """Activity tab: 'Find Location?' -> the branch's block + village -> PROCEED. Returns the village picked."""
     page.locator("a", has_text=re.compile(r"Find Location", re.I)).first.click()
     m = page.locator(".modal-content:visible")
-    pick_block(page, m, "landSubDistrictID", branch)
+    blk = pick_block(page, m, "landSubDistrictID", branch, address)
+    if from_address:                                     # IS regular: village words from the address, not the block's name
+        cands = address_candidates(address, f"{branch}|{blk}")
     wait_for(page, lambda: len(options_of(m, "landVillageID")) > 1, 10, "land villages")
     v = match_village(village, options_of(m, "landVillageID"), cands)
     if not v:
@@ -657,7 +693,7 @@ def process_row(page, d: dict, stage: dict, mark_submitting):
     select_label(p1, "relation", "WIFE OF" if female else "SON OF", page)
     fill_text(page, p1.locator('input[name="relativeName"]').first, relative_name(d.get("RELATIVE NAME", ""), name))
     select_label(p1, "primaryActivity", activity, page)
-    block = pick_block(page, p1, "resSubDistrictId", d["Branch Name"])
+    block = pick_block(page, p1, "resSubDistrictId", d["Branch Name"], d.get("ADDRESS", ""))
     wait_for(page, lambda: len(options_of(p1, "resVillageId")) > 1, 10, "residence villages")
     v = match_village(village, options_of(p1, "resVillageId"))
     if not v:
@@ -756,7 +792,7 @@ def process_row(page, d: dict, stage: dict, mark_submitting):
         select_label(act, "liveStockCode", AH_ANIMAL, page)
         fill_text(page, act.locator('input[name="unitCount"]').first, AH_UNITS)
     try:
-        find_location(page, village, d["Branch Name"])
+        find_location(page, village, d["Branch Name"], address=d.get("ADDRESS", ""))
     except VillageError:
         to_dashboard(page)
         return "VILLAGE_NOT_FOUND", "", f"land village {village!r} not (or not uniquely) in the portal list"
@@ -893,6 +929,7 @@ def run(csv_path: Path):
     pins = collections.Counter(p for r in rows for p in re.findall(r"\b(\d{6})\b", r.get("ADDRESS", "")))
     for r in rows:
         r["_pin"] = pins.most_common(1)[0][0] if pins else DEFAULT_PIN        # this branch's usual pincode
+        BRANCH_ADDRESSES.setdefault(norm(r.get("Branch Name", "")), []).append(r.get("ADDRESS", ""))
         r["_area"] = re.sub(r"[^\d.]", "", r.get(area_col, "")) if area_col else ""
     for acct, rec in progress_records(csv_path).items():         # the progress file wins over the CSV
         for r in rows:
