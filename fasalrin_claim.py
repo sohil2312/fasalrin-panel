@@ -49,7 +49,7 @@ SUBMISSION_TYPE = "PARTIAL"
 COL_INTSUB = "Int Sub Amt"
 CLAIMS_HEADER = ["Time", f.COL_ACCT, f.COL_APPNO, "Loan Sanctioned", "Max Allowed Claim", COL_INTSUB,
                  "IS Claimed", "Result", f.COL_DETAIL]
-DONE = {"CLAIMED", "NO_INT_SUB_AMT", "CLAIM_ZERO_ALLOWED"}      # never tried again
+DONE = {"CLAIMED", "NO_INT_SUB_AMT", "CLAIM_ZERO_ALLOWED", "ALREADY_ON_PORTAL"}   # never tried again
 CLAIMS_CSV = ""
 
 
@@ -78,6 +78,21 @@ def load_claims() -> dict:
     return out
 
 
+def records_base(csv_path: str) -> str:
+    """branches/<SOL>/<SOL> for an IS regular work list or an IS regular claim list
+    (branches/<SOL>/isclaim/<SOL>_isclaim.csv): both use the branch's own claim records."""
+    p = os.path.normpath(csv_path)
+    d = os.path.dirname(p)
+    if os.path.basename(d) == "isclaim":
+        sol_dir = os.path.dirname(d)
+        return os.path.join(sol_dir, os.path.basename(sol_dir))
+    return os.path.splitext(p)[0]
+
+
+def is_claim_list(csv_path: str) -> bool:
+    return os.path.basename(os.path.dirname(os.path.normpath(csv_path))) == "isclaim"
+
+
 def entered_elsewhere(csv_path) -> dict:
     """account -> loan app no for loans of this branch entered another way: APPROVED in <SOL>_approvals.csv
     (approval job or by hand) or COMPLETED in the IS fresh list. Their IS regular status can still say
@@ -104,11 +119,31 @@ def entered_elsewhere(csv_path) -> dict:
     return out
 
 
+def approved_claims() -> set:
+    """Accounts whose IS claim the branch's <SOL>_claim_approvals.csv shows as APPROVED."""
+    path = CLAIMS_CSV[:-len("_claims.csv")] + "_claim_approvals.csv"
+    out = set()
+    if os.path.exists(path):
+        with open(path, newline="", encoding="utf-8-sig") as fh:
+            for e in csv.DictReader(fh):
+                if (e.get("Result") or "").strip() == "APPROVED" and (e.get(f.COL_ACCT) or "").strip():
+                    out.add(e[f.COL_ACCT].strip())
+    return out
+
+
 def work_list():
     """[(account, app no, Int Sub Amt as float, Disb. Date)] for the branch work list's finished applications,
     plus its rows whose loan was approved / entered another way (approvals file, IS fresh)."""
     f.INPUT_CSV = f.OUTPUT_CSV
     header, rows, idx = f.load_rows()
+    if is_claim_list(f.OUTPUT_CSV):              # IS regular claim file: every account of the branch
+        out = []
+        for r in rows[1:]:
+            acct = r[idx[f.COL_ACCT]].strip()
+            if acct:
+                out.append((acct, "", money_to_float(r[idx[COL_INTSUB]]) if COL_INTSUB in idx else 0.0,
+                            r[idx[f.COL_DISB]].strip() if f.COL_DISB in idx else ""))
+        return header, rows, idx, out
     other = entered_elsewhere(f.OUTPUT_CSV)
     out = []
     for r in rows[1:]:
@@ -324,6 +359,8 @@ def file_claim(page, row, intsub, disb, mark_submitting):
 def main(limit: int, assume_yes: bool):
     header, rows, idx, finished = work_list()
     done = load_claims()
+    for a in approved_claims():                  # a claim approved on the portal is never filed again
+        done[a] = "CLAIMED" if done.get(a) not in DONE else done[a]
     todo = [(a, app, ia, dd) for a, app, ia, dd in finished if done.get(a) not in DONE and not
             (done.get(a) or "").startswith("CLAIM_CHECK_PORTAL")]
     held = [a for a, r in done.items() if r.startswith("CLAIM_CHECK_PORTAL")]
@@ -394,7 +431,10 @@ def main(limit: int, assume_yes: bool):
                     hits = [r for r in find_rows(page, acct) if r["acct"] == acct and r["status"].lower() == "pending"]
                     if not hits:
                         waiting += 1                     # not approved yet / claimed already: nothing to do now
-                        print(f"{tag}  not pending for claim (loan not approved yet, or already claimed)")
+                        log_claim(acct, app, "", "", intsub, "", "NOT_PENDING",
+                                  "portal does not list it as Pending for an IS claim (loan not approved yet, "
+                                  "or claimed by hand); tried again next run")
+                        print(f"{tag}  NOT_PENDING  loan not approved yet, or already claimed")
                         break
                     print(f"\r{tag}  claiming...   ", end="", flush=True)
                     stage["s"] = "form"
@@ -462,7 +502,7 @@ if __name__ == "__main__":
     if f.NO_PROMPT and not args.yes:
         ap.error("NO_PROMPT=1 cannot ask: pass --yes")
     f.INPUT_CSV = f.OUTPUT_CSV = args.csv
-    CLAIMS_CSV = os.path.splitext(args.csv)[0] + "_claims.csv"
+    CLAIMS_CSV = records_base(args.csv) + "_claims.csv"
     try:
         main(args.limit, args.yes)
     except KeyboardInterrupt:

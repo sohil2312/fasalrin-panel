@@ -524,6 +524,8 @@
         title="3% PRI claims for 2025-26 loans">PRI regular</button>
       <button role="tab" class="tab" data-tab="fresh" aria-selected="false"
         title="New farmers not in the portal: full application from scratch">IS fresh</button>
+      <button role="tab" class="tab" data-tab="isclaim" aria-selected="false"
+        title="1.5% IS claims on 2025-26 loans, from the IS regular claim file">IS claim</button>
     </nav>
     <span id="pill" class="pill" role="status" aria-live="polite">idle</span>
   </header>
@@ -546,6 +548,7 @@
         <label class="choice"><input type="radio" name="mtype" value="fresh">IS fresh file</label>
         <label class="choice"><input type="radio" name="mtype" value="prireg">PRI regular master
           <small>3% PRI claims on 2025-26 loans: rows with 3% PRI &gt; 0</small></label>
+        <label class="choice"><input type="radio" name="mtype" value="isclaim">IS regular claim file</label>
       </div>
       <div class="row" style="margin-top:0">
         <select id="master" style="max-width:420px"></select>
@@ -630,6 +633,7 @@
         <label class="choice"><input type="radio" name="scheme" value="fresh">IS fresh</label>
         <label class="choice"><input type="radio" name="scheme" value="prireg">PRI regular
           <small>3% PRI claims for 2025-26 loans</small></label>
+        <label class="choice"><input type="radio" name="scheme" value="isclaim">IS claim</label>
       </div>
 
       <label>Job</label>
@@ -655,6 +659,10 @@
         <label class="choice" data-scheme="prireg"><input type="radio" name="kind" value="prireg">File PRI regular claims
           <small><svg class="ic"><use href="#i-user"/></svg>Branch User · FY 25-26</small></label>
         <label class="choice" data-scheme="prireg"><input type="radio" name="kind" value="prireg_approve">Approve PRI regular claims
+          <small><svg class="ic"><use href="#i-shield"/></svg>Branch Head · our claims</small></label>
+        <label class="choice" data-scheme="isclaim"><input type="radio" name="kind" value="isclaim">File IS claims
+          <small><svg class="ic"><use href="#i-user"/></svg>Branch User · pending on portal</small></label>
+        <label class="choice" data-scheme="isclaim"><input type="radio" name="kind" value="isclaim_approve">Approve IS claims
           <small><svg class="ic"><use href="#i-shield"/></svg>Branch Head · our claims</small></label>
       </div>
 
@@ -792,12 +800,17 @@ const CONFIRM = {   // [tick-box label, short reminder]
                    "Checked vs work list · ⚠ Can't be undone"],
   pri_approve: ["Yes, approve the PRI additional claims our job filed",
                 "Checked vs work list · ⚠ Can't be undone"],
+  isclaim: ["Yes, file IS claims for every account the portal lists as Pending",
+            "Disb → 31-03-2026 · IS = lower of max claim / Int Sub Amt · ⚠ Can't be undone"],
+  isclaim_approve: ["Yes, approve the Submitted IS claims that the claim job filed",
+                    "Preview checked first · ⚠ Can't be undone"],
 };
 const isAddList = c => /^branches\/\d+\/additional\/\d+_additional\.csv$/.test(c || "");
 const isPriList = c => /^branches\/\d+\/pri\/\d+_pri\.csv$/.test(c || "");
 const isPriRegList = c => /^branches\/\d+\/prireg\/\d+_prireg\.csv$/.test(c || "");
 const isFreshList = c => /^branches\/\d+\/fresh\/\d+_fresh\.csv$/.test(c || "");
-const listScheme = c => isFreshList(c) ? "fresh" : isPriRegList(c) ? "prireg" : isPriList(c) ? "pri" : isAddList(c) ? "additional" : "regular";
+const isClaimList = c => /^branches\/\d+\/isclaim\/\d+_isclaim\.csv$/.test(c || "");
+const listScheme = c => isClaimList(c) ? "isclaim" : isFreshList(c) ? "fresh" : isPriRegList(c) ? "prireg" : isPriList(c) ? "pri" : isAddList(c) ? "additional" : "regular";
 // column headings of each file type: shown in the panel and copied as one tab-separated row (no download needed)
 const COLUMNS = {
   regular: [
@@ -809,6 +822,12 @@ const COLUMNS = {
     ["ADDRESS", "empty activity", "AT KARODIYA PO SARASADI , TA KADANA , … — village found from it"],
     ["SURVEY NO", "CC004, empty activity", "338"], ["KHATA NO", "CC004, empty activity", "147"],
     ["LAND", "CC004, empty activity", "0.25 (land area)"]],
+  isclaim: [
+    ["Sol ID", "yes", "3106 — one file can hold all branches"], ["Branch Name", "yes", "Kadanagam"],
+    ["Account No.", "yes", "31060500000001 (Text)"], ["Cust id", "no", ""], ["Scheme Code", "no", "CC004 / CC043"],
+    ["Disb. Date", "yes", "interest cycle start (dd-mm-yyyy)"], ["Repay. Date", "no", "31-03-2026"],
+    ["DP", "no", ""], ["Int Sub Amt", "yes", "IS = lower of this and the portal's max claim"],
+    ["Aadhaar No.", "no", ""]],
   fresh: [
     ["Sol ID", "yes", "3106"], ["Branch Name", "yes", "KADANAGAM"], ["Account No.", "yes", "Text"], ["Cust id", "no", ""],
     ["Scheme Code", "yes", "CC004 / CC043"], ["Disb. Date", "yes", "dd-mm-yyyy"], ["Repay. Date", "no", ""],
@@ -826,7 +845,7 @@ function showCols(t) {
   $("colsMsg").textContent = "Paste into cell A1 of a blank Excel sheet · format Account / Aadhaar columns as Text";
 }
 const SCHEME_NAME = {regular: "IS regular", additional: "IS additional", pri: "PRI additional", prireg: "PRI regular",
-                     fresh: "IS fresh"};
+                     fresh: "IS fresh", isclaim: "IS claim"};
 function scheme() { const s = document.querySelector('input[name="scheme"]:checked'); return s ? s.value : "regular"; }
 let lastKind = null, lastScheme = null;
 function refreshForm(locked) {
@@ -944,6 +963,8 @@ const csvLabel = c => {
   if (m) return `${solName(m[1])} — PRI additional work list`;
   m = c.match(/^branches\/(\d+)\/fresh\/\1_fresh\.csv$/);
   if (m) return `${solName(m[1])} — IS fresh work list`;
+  m = c.match(/^branches\/(\d+)\/isclaim\/\1_isclaim\.csv$/);
+  if (m) return `${solName(m[1])} — IS claim list`;
   m = c.match(/^branches\/(\d+)\/prireg\/\1_prireg\.csv$/);
   return m ? `${solName(m[1])} — PRI regular work list` : c;
 };
@@ -951,7 +972,7 @@ function mtype() { return scheme(); }              // the master card follows th
 
 // ---- the IS regular | IS additional tabs switch the whole dashboard ----
 function setTab(t, save = true) {
-  if (!["regular", "additional", "pri", "prireg", "fresh"].includes(t)) t = "regular";
+  if (!["regular", "additional", "pri", "prireg", "fresh", "isclaim"].includes(t)) t = "regular";
   document.querySelectorAll(".tab").forEach(b => b.setAttribute("aria-selected", String(b.dataset.tab === t)));
   document.querySelector(`input[name="scheme"][value="${t}"]`).checked = true;
   document.querySelector(`input[name="mtype"][value="${t}"]`).checked = true;
@@ -962,13 +983,16 @@ function setTab(t, save = true) {
   showCols(t);
   $("repTitle").textContent = fresh ? "1 · Upload branch file & match report" : "3 · Select branch & match approved report";
   $("startTitle").textContent = `${fresh ? 2 : 4} · Start — ${SCHEME_NAME[t]}`;
-  pendLabel = {regular: "pending in master", additional: "Int Sub Amt > 0", pri: "3% PRI > 0", prireg: "3% PRI > 0", fresh: "new farmers"}[t];
+  pendLabel = {regular: "pending in master", additional: "Int Sub Amt > 0", pri: "3% PRI > 0", prireg: "3% PRI > 0", fresh: "new farmers",
+               isclaim: "Int Sub Amt > 0"}[t];
   solChoice = "";
   $("mHelp").innerHTML = hints([
     ["i-file", {regular: "<b>Pending</b> rows", additional: "<b>Int Sub Amt</b> &gt; 0", pri: "<b>3% PRI</b> &gt; 0",
-                prireg: "<b>3% PRI</b> &gt; 0", fresh: "<b>New farmers</b> (not in portal)"}[t]],
+                prireg: "<b>3% PRI</b> &gt; 0", fresh: "<b>New farmers</b> (not in portal)",
+                isclaim: "<b>Every account</b> · claimed if Pending on portal"}[t]],
     ["i-check", "Progress kept"],
     ...(t === "prireg" ? [["i-alert", "Loan via IS regular first", "warn"]] : []),
+    ...(t === "isclaim" ? [["i-link", "Same claim records as IS regular"]] : []),
     ...(t === "fresh" ? [["i-layers", "CC004 crop · CC043 dairy"], ["i-alert", "Crop rows need LAND AREA", "warn"]] : [])]);
   masterChoice = null; csvChoice = null; lastScheme = null;
   $("buildMsg").textContent = ""; $("mMsg").textContent = ""; $("exportMsg").textContent = ""; $("fixMsg").textContent = "";
@@ -1018,6 +1042,14 @@ async function buildSol(sol) {
       ${r.zero_pri} with 3% PRI NULL/0 left out → <b>${r.with_pri} in the work list</b>:
       ${r.claimed} claimed, ${r.on_portal} already on portal, ${r.skipped} hand work, ${r.errors} errors`
       + (r.check ? `, ${r.check} check on portal` : "") + `, <b>${r.to_do} to do</b>.`;
+    csvChoice = r.csv.replace(/\\/g, "/"); lastScheme = null;
+    loadMasters(); poll(); return;
+  }
+  if (r.type === "isclaim") {
+    $("buildMsg").innerHTML = `<b>${esc(r.sol)} ${esc(r.branch)}</b> (IS claim): <b>${r.master_rows} accounts</b>
+      (${r.with_is} with Int Sub Amt, ${r.zero_is} with 0) → ${r.claimed} claimed (${r.approved} approved),
+      ${r.waiting} not pending on portal, ${r.hand} hand work` + (r.check ? `, ${r.check} check on portal` : "")
+      + `, <b>${r.to_do} to do</b>.`;
     csvChoice = r.csv.replace(/\\/g, "/"); lastScheme = null;
     loadMasters(); poll(); return;
   }
@@ -1152,7 +1184,8 @@ function render(s) {
       claim: "Filing IS claims", claim_approve: "Approving IS claims", additional: "Filing IS additional claims",
       additional_approve: "Approving IS additional claims", pri: "Filing PRI additional claims",
       pri_approve: "Approving PRI additional claims", prireg: "Filing PRI regular claims",
-      prireg_approve: "Approving PRI regular claims", fresh: "Entering fresh applications"}[j.kind] || j.kind) + " — " + j.csv;
+      prireg_approve: "Approving PRI regular claims", fresh: "Entering fresh applications",
+      isclaim: "Filing IS claims (claim file)", isclaim_approve: "Approving IS claims (claim file)"}[j.kind] || j.kind) + " — " + j.csv;
     $("jobMeta").textContent = `started ${fmtTime(j.started)}`;
     const pct = j.total ? Math.min(100, Math.round(100 * j.done / j.total)) : 0;
     $("barFill").style.width = (j.total ? pct : (busy ? 100 : 0)) + "%";
@@ -1180,6 +1213,12 @@ function render(s) {
     src.innerHTML = `<b>${sm.rows ?? 0}</b> in file <span class="muted">= ${fr.cc004 ?? 0} crop (CC004) + ${fr.cc043 ?? 0} dairy (CC043)</span>`;
     stats($("sumMain"), [["done", fr.entered ?? 0], ["to do", (fr.todo ?? 0) + (fr.errors ?? 0)],
                          ["hand work", fr.hand ?? 0], ["drafts to check", fr.check ?? 0]]);
+  } else if (sm.scheme === "isclaim") {
+    const c = sm.isclaim || {};
+    src.innerHTML = `<b>${sm.rows ?? 0}</b> accounts in claim file`;
+    stats($("sumMain"), [["claimed", c.claimed ?? 0], ["· approved", c.approved ?? 0], ["· to approve", c.to_approve ?? 0],
+                         ["to do", (c.todo ?? 0) + (c.errors ?? 0)], ["not pending yet", c.waiting ?? 0],
+                         ["hand work", c.hand ?? 0], ["to check", c.check ?? 0]]);
   } else if (["additional", "pri", "prireg"].includes(sm.scheme)) {
     const a = sm.additional || {};
     src.innerHTML = `<b>${sm.rows ?? 0}</b> in work list`;

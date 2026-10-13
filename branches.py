@@ -339,6 +339,117 @@ FRESH_REQUIRED = ["Sol ID", "Branch Name", f.COL_ACCT, "Scheme Code", f.COL_DISB
                   "NAME AS PER ADHAR", "GENDER", "RELATIVE NAME", "ADDRESS", "VILLAGE"]
 
 
+# ----------------------------------------------------------------------------
+# IS regular claim (1.5% IS on 2025-26 loans) from its own claim file ("1.5% IS Regular FY 2025-26"): every account
+# of the branch, whoever entered the loan. Work lists branches/<SOL>/isclaim/<SOL>_isclaim.csv; the records are
+# the branch's own <SOL>_claims.csv / <SOL>_claim_approvals.csv, shared with the IS regular claim job, so a
+# claim filed either way is never filed again.
+# ----------------------------------------------------------------------------
+ISCLAIM_REQUIRED = ["Sol ID", "Branch Name", f.COL_ACCT, f.COL_DISB, "Int Sub Amt"]
+ISCLAIM_OURS = [f.COL_STATUS, "IS Claimed", "Claim App No", f.COL_DETAIL, "Approval"]
+
+
+def isclaim_path(sol: str) -> Path:
+    return BRANCHES / str(sol).strip() / "isclaim" / f"{str(sol).strip()}_isclaim.csv"
+
+
+def is_isclaim_list(csv_path) -> bool:
+    p = Path(csv_path)
+    return p.parent.name == "isclaim" and p.stem.endswith("_isclaim")
+
+
+def claim_records_base(csv_path) -> Path:
+    """branches/<SOL>/<SOL> for an IS regular work list or an IS regular claim list (shared claim records)."""
+    p = Path(csv_path)
+    return p.parent.parent / p.parent.parent.name if is_isclaim_list(p) else p.with_suffix("")
+
+
+def _isclaim_records(csv_path) -> tuple[dict, dict]:
+    """(account -> latest claims record, claim no -> latest approval result) of the branch."""
+    base = claim_records_base(csv_path)
+    recs, appr = {}, {}
+    for path, key, out in ((Path(f"{base}_claims.csv"), f.COL_ACCT, recs),
+                           (Path(f"{base}_claim_approvals.csv"), "Claim No", appr)):
+        if path.exists():
+            with open(path, newline="", encoding="utf-8-sig") as fh:
+                for e in csv.DictReader(fh):
+                    k = (e.get(key) or "").strip()
+                    if k:
+                        out[k] = e
+    return recs, appr
+
+
+def _isclaim_rows(csv_path) -> list[dict]:
+    """Claim-list rows with Status / IS Claimed / Claim App No / Detail / Approval from the records files."""
+    with open(csv_path, newline="", encoding="utf-8-sig") as fh:
+        rows = list(csv.DictReader(fh))
+    recs, appr = _isclaim_records(csv_path)
+    for r in rows:
+        e = recs.get((r.get(f.COL_ACCT) or "").strip())
+        if not e:
+            if _intsub(r) <= 0:                  # nothing to claim: hand work from the start (the job records it so)
+                r[f.COL_STATUS], r[f.COL_DETAIL] = "NO_INT_SUB_AMT", "Int Sub Amt is 0 or blank in the claim file"
+            continue
+        m = re.search(r"claim no (\d+)", e.get(f.COL_DETAIL) or "")
+        r[f.COL_STATUS], r["IS Claimed"] = e.get("Result", ""), e.get("IS Claimed", "")
+        r["Claim App No"], r[f.COL_DETAIL] = (m.group(1) if m else ""), e.get(f.COL_DETAIL, "")
+        a = appr.get(r["Claim App No"]) if r["Claim App No"] else None
+        if a and a.get("Result") in ("APPROVED", "MISMATCH"):
+            r["Approval"] = a["Result"]
+            if a["Result"] == "MISMATCH":
+                r[f.COL_STATUS], r[f.COL_DETAIL] = "MISMATCH", a.get(f.COL_DETAIL, "")
+    return rows
+
+
+def isclaim_bucket(status: str) -> str:
+    """claimed | waiting (not pending on the portal yet) | hand | check | error | todo."""
+    s = (status or "").strip().upper()
+    if s in ("CLAIMED", "ALREADY_ON_PORTAL"):
+        return "claimed"
+    if s == "NOT_PENDING":
+        return "waiting"
+    if s.startswith("CLAIM_CHECK_PORTAL"):
+        return "check"
+    if s in ("NO_INT_SUB_AMT", "CLAIM_ZERO_ALLOWED", "MISMATCH"):
+        return "hand"
+    return "error" if s.startswith("CLAIM_ERROR") else "todo"
+
+
+def sols_isclaim(master) -> list[dict]:
+    """[{sol, branch, rows, pending (Int Sub Amt > 0), built}] for the IS regular claim file."""
+    out = {}
+    for r in read_master(master, ISCLAIM_REQUIRED):
+        s = out.setdefault(r["Sol ID"], {"sol": r["Sol ID"], "branch": r["Branch Name"], "rows": 0, "pending": 0})
+        s["rows"] += 1
+        s["pending"] += _intsub(r) > 0
+    for s in out.values():
+        s["built"] = isclaim_path(s["sol"]).exists()
+    return sorted(out.values(), key=lambda s: s["sol"])
+
+
+def build_isclaim(master, sol: str) -> dict:
+    """branches/<SOL>/isclaim/<SOL>_isclaim.csv = every row of that SOL in the claim file (Int Sub Amt 0 kept:
+    the job records it as hand work), with what the branch's claim records already show."""
+    sol = str(sol).strip()
+    rows = [r for r in read_master(master, ISCLAIM_REQUIRED) if r["Sol ID"] == sol]
+    if not rows:
+        raise ValueError(f"SOL {sol} is not in the IS regular claim file")
+    work = [r for r in rows if r[f.COL_ACCT].startswith(sol)]
+    path = isclaim_path(sol)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    keep = [c for c in rows[0] if c not in ISCLAIM_OURS]
+    header = keep + ISCLAIM_OURS
+    f.OUTPUT_CSV = str(path)
+    f.save_rows(header, [header] + [[r.get(c, "") for c in keep] + [""] * len(ISCLAIM_OURS) for r in work])
+    done = _isclaim_rows(path)
+    b = collections.Counter(isclaim_bucket(r.get(f.COL_STATUS) or "") for r in done)
+    return {"sol": sol, "branch": rows[0]["Branch Name"], "csv": str(path.relative_to(ROOT)),
+            "master_rows": len(rows), "with_is": sum(1 for r in work if _intsub(r) > 0),
+            "zero_is": sum(1 for r in work if _intsub(r) <= 0), "other_branch": len(rows) - len(work),
+            "claimed": b["claimed"], "approved": sum(1 for r in done if r.get("Approval") == "APPROVED"),
+            "waiting": b["waiting"], "hand": b["hand"], "check": b["check"], "errors": b["error"], "to_do": b["todo"]}
+
+
 def is_fresh_list(csv_path) -> bool:
     p = Path(csv_path)
     return p.parent.name == "fresh" and p.stem.endswith("_fresh")
@@ -503,7 +614,9 @@ def _pri_rows(csv_path) -> list[dict]:
 
 
 def scheme_of(csv_path) -> str:
-    """'fresh' / 'prireg' / 'pri' / 'additional' / 'regular' for a work list path."""
+    """'isclaim' / 'fresh' / 'prireg' / 'pri' / 'additional' / 'regular' for a work list path."""
+    if is_isclaim_list(csv_path):
+        return "isclaim"
     if is_fresh_list(csv_path):
         return "fresh"
     if is_prireg_list(csv_path):
@@ -515,7 +628,8 @@ def branch_names(sol: str) -> set[str]:
     """Every Branch Name this SOL has in any of its work lists (masters spell some names differently,
     e.g. KIDIYA / Kidia; the portal says KIDIA) - for the login branch check by SOL."""
     names = set()
-    for p in (worklist_path(sol), additional_path(sol), pri_path(sol), pri_path(sol, "prireg"), fresh_path(sol)):
+    for p in (worklist_path(sol), additional_path(sol), pri_path(sol), pri_path(sol, "prireg"), fresh_path(sol),
+              isclaim_path(sol)):
         if p.exists():
             with open(p, newline="", encoding="utf-8-sig") as fh:
                 for r in csv.DictReader(fh):
@@ -581,7 +695,20 @@ FRESH_REASONS = [   # IS fresh work lists
 ]
 
 
+ISCLAIM_REASONS = [   # IS regular claim lists
+    ("NOT_PENDING",        "Not pending",     "Portal does not list it as Pending for an IS claim: loan not entered / approved yet, "
+                                              "or claimed by hand. The next run tries again"),
+    ("NO_INT_SUB_AMT",     "No Int Sub Amt",  "Int Sub Amt is 0 or blank in the claim file"),
+    ("CLAIM_ZERO_ALLOWED", "Zero allowed",    "Portal Maximum Allowed Claim is 0: check the loan on the portal"),
+    ("MISMATCH",           "Mismatch",        "Branch Head check failed (claim no / IS / dates): not approved"),
+    ("CLAIM_CHECK_PORTAL", "Check on portal", "Saved or CONFIRM clicked but the result is unknown: check the portal"),
+    ("CLAIM_ERROR",        "Errors",          "Script error while filing (see Detail)"),
+]
+
+
 def reasons_for(csv_path):
+    if is_isclaim_list(csv_path):
+        return ISCLAIM_REASONS
     if is_fresh_list(csv_path):
         return FRESH_REASONS
     return PRI_REASONS if is_pri_list(csv_path) else ADD_REASONS if is_additional_list(csv_path) else REASONS
@@ -623,7 +750,9 @@ def _additional_rows(csv_path) -> list[dict]:
 def hand_work(csv_path) -> dict:
     """{reason: [row dicts]} for every row that is not finished and not simply to do."""
     reasons = reasons_for(csv_path)
-    if is_fresh_list(csv_path):
+    if is_isclaim_list(csv_path):
+        rows = _isclaim_rows(csv_path)
+    elif is_fresh_list(csv_path):
         rows = _fresh_rows(csv_path)
     elif is_pri_list(csv_path):
         rows = _pri_rows(csv_path)
@@ -904,6 +1033,8 @@ def apply_corrections(csv_path, text: str) -> dict:
     rows_in = list(csv.DictReader(io.StringIO(text.lstrip("﻿"))))
     if not rows_in or f.COL_ACCT not in rows_in[0] or FIXED not in rows_in[0]:
         raise ValueError(f"not an exported hand-work file (needs columns '{f.COL_ACCT}' and '{FIXED}')")
+    if is_isclaim_list(csv_path):
+        raise ValueError("IS claim lists take no corrections: fix the claim file and upload it again, then Rebuild")
     if is_pri_list(csv_path):
         return apply_pri_corrections(csv_path, rows_in)
     if is_additional_list(csv_path):
@@ -1037,7 +1168,7 @@ def report_info(path) -> dict:
 
 def wants_kind(csv_path) -> str:
     return {"regular": "loan", "fresh": "loan", "additional": "claim IS", "pri": "claim PRI",
-            "prireg": "claim PRI"}[scheme_of(csv_path)]
+            "prireg": "claim PRI", "isclaim": "claim IS"}[scheme_of(csv_path)]
 
 
 def list_reports(csv_path) -> list[dict]:
@@ -1087,7 +1218,7 @@ def save_report(csv_path, name: str, data: bytes) -> str:
 
 def sol_of(csv_path) -> str:
     p = Path(csv_path)
-    return p.parent.parent.name if p.parent.name in ("additional", "pri", "prireg") else p.parent.name
+    return p.parent.parent.name if p.parent.name in ("additional", "pri", "prireg", "isclaim") else p.parent.name
 
 
 def _append_records(rec_path: Path, header: list, recs: list[dict]):
@@ -1154,6 +1285,31 @@ def match_report(csv_path, report_name: str, dry_run: bool = False) -> dict:
             f.save_rows(header, rows)
         return {"report_rows": len(found), "marked": marked, "already_done": already,
                 "in_report_not_in_list": len(set(found) - {r[ix[f.COL_ACCT]].strip() for r in rows[1:]})}
+
+    if scheme == "isclaim":                            # approved IS regular claims: never filed again
+        import fasalrin_additional as ad
+        import fasalrin_claim as fc
+        found = ad.read_claim_report(path, rollover=False, loan_fy="2025-2026")   # {acct: (claim no, user)}
+        recs, _ = _isclaim_records(csv_path)
+        with open(csv_path, newline="", encoding="utf-8-sig") as fh:
+            work = list(csv.DictReader(fh))
+        new, already = [], 0
+        for r in work:
+            acct = (r.get(f.COL_ACCT) or "").strip()
+            if acct not in found:
+                continue
+            st = ((recs.get(acct) or {}).get("Result") or "").strip()
+            if st in ("CLAIMED", "ALREADY_ON_PORTAL") or st.startswith("CLAIM_CHECK_PORTAL"):
+                already += 1
+                continue
+            no, user = found[acct]
+            new.append({"Time": now, f.COL_ACCT: acct, "Int Sub Amt": r.get("Int Sub Amt", ""),
+                        "Result": "ALREADY_ON_PORTAL",
+                        f.COL_DETAIL: f"claim no {no}; {tag}: approved IS claim (filed by {user or '?'})"})
+        if new and not dry_run:
+            _append_records(Path(f"{claim_records_base(csv_path)}_claims.csv"), fc.CLAIMS_HEADER, new)
+        return {"report_rows": len(found), "marked": len(new), "already_done": already,
+                "in_report_not_in_list": len(set(found) - {(r.get(f.COL_ACCT) or "").strip() for r in work})}
 
     if scheme == "additional":
         import fasalrin_additional as ad

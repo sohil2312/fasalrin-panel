@@ -471,8 +471,10 @@ def _recover(page):
 # ----------------------------------------------------------------------------
 # portal claim report (uploaded in the panel, matched there -> ALREADY_ON_PORTAL in the records file)
 # ----------------------------------------------------------------------------
-def read_claim_report(path) -> dict:
-    """zip of xlsx part(s) -> {account: (claim no, user)} for approved IS rollover claims on 2024-25 loans."""
+def read_claim_report(path, rollover: bool = True, loan_fy: str | None = None) -> dict:
+    """zip of xlsx part(s) -> {account: (claim no, user)} for approved IS rollover claims on 2024-25 loans
+    (rollover=False, loan_fy='2025-2026': approved IS regular claims on 2025-26 loans)."""
+    loan_fy = loan_fy or FIN_YEAR
     import io
     import zipfile
     import openpyxl
@@ -493,8 +495,8 @@ def read_claim_report(path) -> dict:
             for row in it:
                 acct = row[col["Account Number"]]
                 acct = str(int(acct)) if isinstance(acct, float) else str(acct or "").strip()
-                if (acct and str(row[col["Is Rollover"]] or "").strip().upper() == "YES"
-                        and str(row[col["Loan application FY"]] or "").strip() == FIN_YEAR
+                if (acct and (str(row[col["Is Rollover"]] or "").strip().upper() == "YES") == rollover
+                        and str(row[col["Loan application FY"]] or "").strip() == loan_fy
                         and str(row[col["Application Status"]] or "").strip().lower() == "approved"):
                     found[acct] = (str(row[col["Claim Number"]] or "").strip(), str(row[col["User Name"]] or "").strip())
             wb.close()

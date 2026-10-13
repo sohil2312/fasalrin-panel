@@ -47,13 +47,17 @@ JOBS = {
     "prireg_approve": {"script": "fasalrin_prireg_verify.py", "log": "prireg_verify.log", "login": "Branch Head"},
     # IS fresh (farmers not in the portal yet: entered from scratch from the "not in system" Excel)
     "fresh": {"script": "fasalrin_fresh.py", "log": "fresh.log", "login": "Branch User"},
+    # IS regular claim (1.5% IS on 2025-26 loans) from its own claim file: every account of the branch
+    "isclaim": {"script": "fasalrin_claim.py", "log": "isclaim.log", "login": "Branch User"},
+    "isclaim_approve": {"script": "fasalrin_claim_verify.py", "log": "isclaim_verify.log", "login": "Branch Head"},
 }
 ADDITIONAL_JOBS = {"additional", "additional_approve"}
 JOB_SCHEME = {"additional": "additional", "additional_approve": "additional", "pri": "pri", "pri_approve": "pri",
-              "prireg": "prireg", "prireg_approve": "prireg", "fresh": "fresh"}
+              "prireg": "prireg", "prireg_approve": "prireg", "fresh": "fresh",
+              "isclaim": "isclaim", "isclaim_approve": "isclaim"}
 SCHEME_NAME = {"regular": "IS regular", "additional": "IS additional", "pri": "PRI additional", "prireg": "PRI regular",
-               "fresh": "IS fresh"}
-MASTER_KINDS = ("regular", "additional", "pri", "prireg", "fresh")
+               "fresh": "IS fresh", "isclaim": "IS regular claim"}
+MASTER_KINDS = ("regular", "additional", "pri", "prireg", "fresh", "isclaim")
 SIDE_FILES = ("_progress.csv", "_approvals.csv")
 
 lock = threading.Lock()
@@ -73,17 +77,19 @@ def input_csvs() -> list[str]:
                  for p in (ROOT / "branches").glob(f"*/{k}/*_{k}.csv") if p.stem == f"{p.parent.parent.name}_{k}")
     fresh = sorted(p.relative_to(ROOT).as_posix() for p in (ROOT / "branches").glob("*/fresh/*_fresh.csv")
                    if p.stem == f"{p.parent.parent.name}_fresh")
+    isclaim = sorted(p.relative_to(ROOT).as_posix() for p in (ROOT / "branches").glob("*/isclaim/*_isclaim.csv")
+                     if p.stem == f"{p.parent.parent.name}_isclaim")
     loose = sorted(p.name for p in ROOT.glob("*.csv") if not p.name.endswith(SIDE_FILES))
-    return work + add + pri + fresh + loose
+    return work + add + pri + fresh + isclaim + loose
 
 
 MASTER_DIR = ROOT / "master"
 MASTER_DIRS = {"regular": MASTER_DIR, "additional": MASTER_DIR / "additional", "pri": MASTER_DIR / "pri",
-               "prireg": MASTER_DIR / "prireg", "fresh": MASTER_DIR / "fresh"}
+               "prireg": MASTER_DIR / "prireg", "fresh": MASTER_DIR / "fresh", "isclaim": MASTER_DIR / "isclaim"}
 SOLS_OF = {"regular": branches.sols, "additional": branches.sols_additional, "pri": branches.sols_pri,
-           "prireg": branches.sols_prireg, "fresh": branches.sols_fresh}
+           "prireg": branches.sols_prireg, "fresh": branches.sols_fresh, "isclaim": branches.sols_isclaim}
 BUILD_OF = {"regular": branches.build, "additional": branches.build_additional, "pri": branches.build_pri,
-            "prireg": branches.build_prireg, "fresh": branches.build_fresh}
+            "prireg": branches.build_prireg, "fresh": branches.build_fresh, "isclaim": branches.build_isclaim}
 
 
 def masters(kind: str = "regular") -> list[str]:
@@ -230,6 +236,8 @@ def start_job(kind: str, csv_name: str, answer: str, limit: int = 0, retry_rever
         if kind != "entry" and limit > 0:
             args += ["--limit", str(limit)]
         env = dict(os.environ, NO_PROMPT="1", PYTHONIOENCODING="utf-8")
+        if (ROOT / spec["log"]).exists():          # the previous run's log stays readable
+            os.replace(ROOT / spec["log"], ROOT / (Path(spec["log"]).stem + ".prev.log"))
         log = open(ROOT / spec["log"], "w", encoding="utf-8")
         flags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
         proc = subprocess.Popen(args, cwd=ROOT, env=env, stdout=log, stderr=subprocess.STDOUT,
@@ -324,6 +332,21 @@ def additional_summary(name: str) -> dict:
                            "todo": b["todo"]}}
 
 
+def isclaim_summary(name: str) -> dict:
+    """Totals for an IS regular claim list (statuses from the branch's claim records + claim approvals)."""
+    rows = branches._isclaim_rows(ROOT / name)
+    b = collections.Counter(branches.isclaim_bucket(r.get("Status") or "") for r in rows)
+    st = collections.Counter((r.get("Status") or "").strip() or "TO DO" for r in rows)
+    summ = branches.hand_work_dir(ROOT / name) / f"{Path(name).stem}_summary.csv"
+    approved = sum(1 for r in rows if r.get("Approval") == "APPROVED")
+    return {"scheme": "isclaim", "rows": len(rows), "status": dict(st.most_common()),
+            "reasons": branches.hand_work_counts(ROOT / name),
+            "export": time.strftime("%d-%m %H:%M", time.localtime(summ.stat().st_mtime)) if summ.exists() else None,
+            "isclaim": {"claimed": b["claimed"], "approved": approved, "to_approve": b["claimed"] - approved,
+                        "waiting": b["waiting"], "hand": b["hand"], "check": b["check"], "errors": b["error"],
+                        "todo": b["todo"]}}
+
+
 def fresh_summary(name: str) -> dict:
     """Totals for an IS fresh work list (statuses from its progress file)."""
     rows = branches._fresh_rows(ROOT / name)
@@ -340,6 +363,11 @@ def fresh_summary(name: str) -> dict:
 
 
 def csv_summary(name: str) -> dict:
+    if branches.is_isclaim_list(ROOT / name):
+        try:
+            return isclaim_summary(name)
+        except OSError:
+            return {}
     if branches.is_fresh_list(ROOT / name):
         try:
             return fresh_summary(name)

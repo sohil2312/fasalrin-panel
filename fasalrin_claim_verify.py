@@ -382,7 +382,8 @@ if __name__ == "__main__":
     if f.NO_PROMPT and not args.yes:
         ap.error("NO_PROMPT=1 cannot ask: pass --yes")
     f.INPUT_CSV = f.OUTPUT_CSV = args.csv
-    base = os.path.splitext(args.csv)[0]
+    import fasalrin_claim
+    base = fasalrin_claim.records_base(args.csv)          # IS regular work list or IS regular claim list
     CLAIMS_CSV, APPROVALS_CSV = base + "_claims.csv", base + "_claim_approvals.csv"
     try:
         main(args.limit, args.yes)
