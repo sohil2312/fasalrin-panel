@@ -620,6 +620,10 @@ def main(limit: int, assume_yes: bool):
 
         if T.summary():
             print("\n" + T.summary())
+        if limit and approved >= limit:            # say why the run ended
+            print(f"\n[stop] 'At most {limit}' reached: {approved} approved this run. Empty At most = all.")
+        elif not os.path.exists(f.STOP_FLAG):
+            print("\n[list] no more Submitted claims of ours in the portal list")
         print(f"\n[done] {approved} claims approved, {mismatched} mismatch (not approved), {skipped} not ours, "
               f"{errors} errors.  Log: {APPROVALS_CSV}")
         if not f.NO_PROMPT:
