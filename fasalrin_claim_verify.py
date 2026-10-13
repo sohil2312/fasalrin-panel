@@ -45,6 +45,34 @@ MAX_ROW_FAILS = 2
 CLAIMS_CSV = APPROVALS_CSV = ""
 
 
+# ---- hang-proofing: shared by the approval scripts ----
+MAX_ERROR_STREAK = 5                  # this many errors in a row -> stop cleanly (portal down / logged out for good)
+
+
+def guard_page(page):
+    """A browser pop-up (alert / confirm) never freezes the script: it is dismissed (= Cancel, nothing approved)."""
+    try:
+        page.on("dialog", lambda d: d.dismiss())
+    except Exception:
+        pass
+    return page
+
+
+def live_page(ctx, page):
+    """The tab was closed or crashed -> open a new one on the portal (log in again if the session went)."""
+    try:
+        if not page.is_closed():
+            return page
+    except Exception:
+        pass
+    print("\n    [recover] browser tab was closed: opening a new one", flush=True)
+    page = guard_page(ctx.new_page())
+    page.goto(f.BASE, wait_until="domcontentloaded")
+    if f.is_logged_out(page):
+        f.require_login(page, "The browser tab was closed")
+    return page
+
+
 def log(acct, app, claim_no, result, detail):
     new = not os.path.exists(APPROVALS_CSV)
     with open(APPROVALS_CSV, "a", newline="", encoding="utf-8") as fh:
@@ -91,6 +119,59 @@ def read_preview(page) -> dict:
             return d
         page.wait_for_timeout(100)
     raise RuntimeError("claim preview never populated")
+
+
+def decided() -> dict:
+    """claim no -> latest result in the approvals file (APPROVED / MISMATCH / CHECK_PORTAL / ...)."""
+    out = {}
+    if os.path.exists(APPROVALS_CSV):
+        with open(APPROVALS_CSV, newline="", encoding="utf-8-sig") as fh:
+            for e in csv.DictReader(fh):
+                if (e.get("Claim No") or "").strip():
+                    out[e["Claim No"].strip()] = (e.get("Result") or "").strip()
+    return out
+
+
+def can_search(page) -> bool:
+    return page.locator('input[placeholder="Search Here"]:visible').count() > 0
+
+
+def search_list(page, acct: str) -> list[dict]:
+    """Search the Submitted list for one account (as the claim filing script does): its rows, [] if none.
+    Waits until the table shows THIS search (a row with the account, or 'No record(s) found')."""
+    box = page.locator('input[placeholder="Search Here"]:visible').first
+    box.fill("")
+    box.fill(acct)
+    mag = page.locator("button.btn-secondary:has(i.fa-search)")
+    if mag.count():
+        mag.first.click()
+    else:
+        box.press("Enter")
+    shows = lambda: page.evaluate(r"""(a) => {
+        const t = [...document.querySelectorAll('table')].find(t => /Claim No/i.test(t.innerText));
+        if (t && [...t.querySelectorAll('tbody tr')].some(r => [...r.children].some(td => td.innerText.trim() === a)))
+            return 'rows';
+        return document.body.innerText.includes('No record(s) found') ? 'none' : '';
+    }""", acct)
+    state = wait_for(page, shows, 12, "search results for this account")
+    if state == "none":                           # maybe the previous search's message: look once more
+        page.wait_for_timeout(700)
+        state = shows() or "none"
+    return [r for r in list_rows(page) if r["acct"] == acct] if state == "rows" else []
+
+
+def refresh_list(page):
+    """Back on a fresh Submitted list: PROCEED again when already on it (no dashboard round trip)."""
+    proceed = page.locator("button:visible", has_text=BTN("PROCEED"))
+    if "/claim-application-list" in page.url and proceed.count():
+        proceed.first.click()
+        try:
+            wait_for(page, lambda: list_rows(page) or re.search(r"No record\(s\) found", f.body_text(page)), 20,
+                     "claim table")
+            return
+        except StuckError:
+            pass
+    open_list(page)
 
 
 def _date_in(text: str):
@@ -264,7 +345,7 @@ def main(limit: int, assume_yes: bool):
         ctx = p.chromium.launch_persistent_context(PROFILE_DIR, headless=f.HEADLESS, slow_mo=0,   # waits poll
                                                    viewport=None, args=["--start-maximized"])
         ctx.set_default_timeout(f.STUCK_TIMEOUT_S * 1000)
-        page = ctx.pages[0] if ctx.pages else ctx.new_page()
+        page = guard_page(ctx.pages[0] if ctx.pages else ctx.new_page())
         page.goto(f.BASE, wait_until="domcontentloaded")
         print("\n" + "=" * 70)
         print("  LOG IN with the BRANCH HEAD login (mobile + password + captcha).")
@@ -303,7 +384,103 @@ def main(limit: int, assume_yes: bool):
         approved = errors = skipped = mismatched = 0
         fails: dict[str, int] = {}
         seen: set[str] = set()                         # claim numbers walked past this run (not ours / mismatch)
-        while not (limit and approved >= limit):
+        streak = 0                                     # errors in a row
+        dec = decided()
+        targets = [(cn, m) for cn, m in ours.items() if dec.get(cn) not in ("APPROVED", "MISMATCH", "CHECK_PORTAL")]
+        walk = bool(targets)                           # page through the whole list (slow) only without search
+        if not targets:
+            print(f"[search] none of our {len(ours)} filed claims is waiting for approval in this computer's records "
+                  f"({CLAIMS_CSV}): nothing to approve. Claims filed on another computer need its records file.")
+        if targets and can_search(page):
+            walk = False
+            pending = dict(targets)                    # claim no -> ours, still to approve
+            total = len(pending)
+            print(f"[search] {total} of our claims to approve: taken from the list page shown, "
+                  f"or looked up by account when that page has none of ours (other claims are not opened)")
+            n = 0
+            while pending:
+                if os.path.exists(f.STOP_FLAG):
+                    print("\n[stop] stop requested — stopping between claims")
+                    break
+                if (limit and approved >= limit) or streak >= MAX_ERROR_STREAK:
+                    break
+                stage = {"s": "search"}
+                cn = None
+                try:
+                    page = live_page(ctx, page)
+                    if "/claim-application-list" not in page.url or not can_search(page):
+                        refresh_list(page)
+                    on_page = [r for r in list_rows(page) if r["status"].lower() == "submitted" and r["claim"] in pending]
+                    if on_page:                        # fastest: one of ours is right here
+                        row = on_page[0]
+                    else:                              # look the next one up by its account
+                        cn = next(iter(pending))
+                        acct = pending[cn]["acct"]
+                        hits = [r for r in search_list(page, acct)
+                                if r["claim"] == cn and r["status"].lower() == "submitted"]
+                        if not hits:                   # approved by hand already / not submitted
+                            n += 1
+                            skipped += 1
+                            pending.pop(cn)
+                            print(f"[{n:>4}/{total}] {cn}  acct {acct}  NOT_SUBMITTED  not in the Submitted list now",
+                                  flush=True)
+                            continue
+                        row = hits[0]
+                    cn, mine = row["claim"], pending[row["claim"]]
+                    tag = f"[{n + 1:>4}/{total}] {cn}  acct {row['acct']}"
+                    print(f"\r{tag}  checking...   ", end="", flush=True)
+                    result, detail = review_and_approve(page, row, mine, disb_of.get(row["acct"], ""), stage)
+                    log(row["acct"], row["app"], cn, result, detail)
+                    pending.pop(cn)
+                    n += 1
+                    streak = 0
+                    if result == "APPROVED":
+                        approved += 1
+                        print(f"\r{tag}  APPROVED   | approved {approved}  mismatch {mismatched}  errors {errors}",
+                              flush=True)
+                    else:
+                        mismatched += 1
+                        print(f"\r{tag}  MISMATCH   {detail[:120]}", flush=True)
+                except KeyboardInterrupt:
+                    raise
+                except Exception as e:
+                    import traceback
+                    with open("errors.log", "a") as ef:
+                        ef.write(f"\n===== {time.strftime('%Y-%m-%d %H:%M:%S')} CLAIM-VERIFY claim={cn} stage={stage['s']}\n")
+                        ef.write(traceback.format_exc())
+                    errors += 1
+                    streak += 1
+                    msg = str(e).splitlines()[0][:100] if str(e) else type(e).__name__
+                    print(f"\n    [exc] stage={stage['s']} {type(e).__name__}: {msg}", flush=True)
+                    try:
+                        page = live_page(ctx, page)
+                        shot(page, f"claimverify_error_{cn}")
+                    except Exception:
+                        pass
+                    if cn in pending:
+                        acct = pending[cn]["acct"]
+                        if stage["s"] == "approving":    # APPROVE clicked: never again blindly
+                            log(acct, "", cn, "CHECK_PORTAL", f"error after APPROVE: {msg}")
+                            print(f"[{n + 1:>4}/{total}] {cn}  acct {acct}  CHECK_PORTAL  check it on the portal", flush=True)
+                            pending.pop(cn)
+                            n += 1
+                        else:
+                            fails[cn] = fails.get(cn, 0) + 1
+                            if fails[cn] >= MAX_ROW_FAILS:
+                                log(acct, "", cn, "ERROR", msg)
+                                print(f"[{n + 1:>4}/{total}] {cn}  acct {acct}  ERROR  {msg}", flush=True)
+                                pending.pop(cn)
+                                n += 1
+                    try:
+                        if f.is_logged_out(page):
+                            f.require_login(page)
+                        f.reload_to_dashboard(page)
+                        open_list(page)
+                    except Exception:
+                        pass
+            if streak >= MAX_ERROR_STREAK:
+                print(f"\n[stop] {streak} errors in a row - stopping (portal slow / down?). Rerun to continue.")
+        while walk and not (limit and approved >= limit) and streak < MAX_ERROR_STREAK:
             if os.path.exists(f.STOP_FLAG):
                 print("\n[stop] stop requested — stopping between claims")
                 break
@@ -331,12 +508,13 @@ def main(limit: int, assume_yes: bool):
             try:
                 result, detail = review_and_approve(page, row, mine, disb_of.get(row["acct"], ""), stage)
                 log(row["acct"], row["app"], row["claim"], result, detail)
+                streak = 0
                 if result == "APPROVED":
                     approved += 1
                     print(f"\r[{approved + errors:>4}] {row['claim']}  acct {row['acct']}  APPROVED   | approved {approved}"
                           f"  mismatch {mismatched}  errors {errors}", flush=True)
                     if "/claim-application-list" not in page.url or not list_rows(page):
-                        open_list(page)
+                        refresh_list(page)
                 else:
                     seen.add(row["claim"])
                     mismatched += 1
@@ -346,9 +524,11 @@ def main(limit: int, assume_yes: bool):
             except Exception as e:
                 import traceback
                 with open("errors.log", "a") as ef:
-                    ef.write(f"\n===== {time.strftime('%Y-%m-%d %H:%M:%S')} CLAIM-VERIFY claim={row['claim']} stage={stage['s']} url={page.url}\n")
+                    ef.write(f"\n===== {time.strftime('%Y-%m-%d %H:%M:%S')} CLAIM-VERIFY claim={row['claim']} stage={stage['s']}\n")
                     ef.write(traceback.format_exc())
                 errors += 1
+                streak += 1
+                page = live_page(ctx, page)
                 msg = str(e).splitlines()[0][:100]
                 shot(page, f"claimverify_error_{row['acct']}")
                 print(f"\n    [exc] stage={stage['s']} {type(e).__name__}: {msg}", flush=True)

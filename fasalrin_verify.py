@@ -192,6 +192,34 @@ def open_list(page, refresh_only=False):
         pass
 
 
+# ---- hang-proofing: shared by the approval scripts ----
+MAX_ERROR_STREAK = 5                  # this many errors in a row -> stop cleanly (portal down / logged out for good)
+
+
+def guard_page(page):
+    """A browser pop-up (alert / confirm) never freezes the script: it is dismissed (= Cancel, nothing approved)."""
+    try:
+        page.on("dialog", lambda d: d.dismiss())
+    except Exception:
+        pass
+    return page
+
+
+def live_page(ctx, page):
+    """The tab was closed or crashed -> open a new one on the portal (log in again if the session went)."""
+    try:
+        if not page.is_closed():
+            return page
+    except Exception:
+        pass
+    print("\n    [recover] browser tab was closed: opening a new one", flush=True)
+    page = guard_page(ctx.new_page())
+    page.goto(f.BASE, wait_until="domcontentloaded")
+    if f.is_logged_out(page):
+        f.require_login(page, "The browser tab was closed")
+    return page
+
+
 def approve_one(page, row) -> str:
     """REVIEW -> APPROVE -> CONFIRM -> success. Returns the approved application number."""
     app, acct = row["app"], row["acct"]
@@ -262,7 +290,7 @@ def main(limit: int, assume_yes: bool):
         ctx = p.chromium.launch_persistent_context(PROFILE_DIR, headless=f.HEADLESS, slow_mo=0,
                                                    viewport=None, args=["--start-maximized"])
         ctx.set_default_timeout(f.STUCK_TIMEOUT_S * 1000)
-        page = ctx.pages[0] if ctx.pages else ctx.new_page()
+        page = guard_page(ctx.pages[0] if ctx.pages else ctx.new_page())
         page.goto(f.BASE, wait_until="domcontentloaded")
         print("\n" + "=" * 70)
         print("  LOG IN with the BRANCH HEAD login (mobile + password + captcha).")
@@ -315,9 +343,12 @@ def main(limit: int, assume_yes: bool):
                 ctx.close()
                 return
 
-        approved = errors = 0
+        approved = errors = streak = 0
         fails: dict[str, int] = {}
         while not (limit and approved >= limit):
+            if streak >= MAX_ERROR_STREAK:
+                print(f"\n[stop] {streak} errors in a row - stopping (portal slow / down?). Rerun to continue.")
+                break
             if os.path.exists(f.STOP_FLAG):            # control panel: "Stop after current row"
                 print("\n[stop] stop requested — stopping between applications")
                 break
@@ -338,6 +369,7 @@ def main(limit: int, assume_yes: bool):
             try:
                 got = approve_one(page, row)
                 approved += 1
+                streak = 0
                 record(sheet, row["acct"], got, "APPROVED", "approved by Branch Head")
                 print(f"\r[{approved + errors:>4}] {row['app']}  acct {row['acct']}  APPROVED"
                       f"{'' if row['acct'] in sheet.by_acct else '  (account not in CSV)'}"
@@ -349,9 +381,11 @@ def main(limit: int, assume_yes: bool):
             except Exception as e:
                 import traceback
                 with open("errors.log", "a") as ef:
-                    ef.write(f"\n===== {time.strftime('%Y-%m-%d %H:%M:%S')} VERIFY app={row['app']} url={page.url}\n")
+                    ef.write(f"\n===== {time.strftime('%Y-%m-%d %H:%M:%S')} VERIFY app={row['app']}\n")
                     ef.write(traceback.format_exc())
                 errors += 1
+                streak += 1
+                page = live_page(ctx, page)
                 fails[row["app"]] = fails.get(row["app"], 0) + 1
                 msg = str(e).splitlines()[0][:100]
                 shot(page, f"verify_error_{row['app']}")
