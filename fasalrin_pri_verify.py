@@ -408,13 +408,15 @@ def wait_rows(page, seconds) -> bool:
 
 
 def refresh_list(page):
-    """After an approval: PROCEED again on the list (filters stay) instead of the whole dashboard route."""
+    """After an approval: BACK to the list; when the list is there with rows that is enough (the approved claim
+    is skipped as seen). Only an empty / missing list is reloaded (PROCEED), never the whole dashboard route."""
     if "/claim-application-preview" in page.url:
         back = page.locator("button:visible", has_text=BTN("BACK"))
         if back.count():
             back.first.click()
             try:
-                wait_for(page, lambda: "/claim-application-list" in page.url, 15, "back on the claim list")
+                wait_for(page, lambda: "/claim-application-list" in page.url and safe_rows(page), 5, "the claim list rows")
+                return                           # list shown again: no reload needed
             except StuckError:
                 pass
     proceed = page.locator("button:visible", has_text=BTN("PROCEED"))
@@ -546,6 +548,7 @@ def main(limit: int, assume_yes: bool):
                 stage["s"] = "approving"
                 no = cv.approve_one(page, row)
                 T.mark("approve")
+                stage["s"] = "approved"              # recorded below: a later error is not 'check on portal'
                 approved += 1
                 seen.add(row["claim"])
                 log(row["acct"], row["claim"], "APPROVED", f"claim {no} PRI {d.get('Applicable PRI')}")
