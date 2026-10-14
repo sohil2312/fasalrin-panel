@@ -682,13 +682,13 @@
         <label class="choice" data-scheme="pri"><input type="radio" name="kind" value="pri">File PRI additional claims
           <small><svg class="ic"><use href="#i-user"/></svg>Branch User · FY 24-25</small></label>
         <label class="choice" data-scheme="pri"><input type="radio" name="kind" value="pri_approve">Approve PRI additional claims
-          <small><svg class="ic"><use href="#i-shield"/></svg>Branch Head · our claims</small></label>
+          <small><svg class="ic"><use href="#i-shield"/></svg>Branch Head · all Submitted</small></label>
         <label class="choice" data-scheme="fresh"><input type="radio" name="kind" value="fresh">Enter fresh applications
           <small><svg class="ic"><use href="#i-user"/></svg>Branch User · new farmers</small></label>
         <label class="choice" data-scheme="prireg"><input type="radio" name="kind" value="prireg">File PRI regular claims
           <small><svg class="ic"><use href="#i-user"/></svg>Branch User · FY 25-26</small></label>
         <label class="choice" data-scheme="prireg"><input type="radio" name="kind" value="prireg_approve">Approve PRI regular claims
-          <small><svg class="ic"><use href="#i-shield"/></svg>Branch Head · our claims</small></label>
+          <small><svg class="ic"><use href="#i-shield"/></svg>Branch Head · all Submitted</small></label>
         <label class="choice" data-scheme="isclaim"><input type="radio" name="kind" value="isclaim">File IS claims
           <small><svg class="ic"><use href="#i-user"/></svg>Branch User · pending on portal</small></label>
         <label class="choice" data-scheme="isclaim"><input type="radio" name="kind" value="isclaim_approve">Approve IS claims
@@ -828,10 +828,10 @@ const CONFIRM = {   // [tick-box label, short reminder]
            "Disb → Repay · PRI = lower · ⚠ Can't be undone"],
   fresh: ["Yes, enter fresh applications for this branch",
           "Aadhaar VERIFY · CC004 Castor / CC043 Dairy cow ×4 · \u26a0 Can't be undone"],
-  prireg_approve: ["Yes, approve the PRI regular claims our job filed",
-                   "Checked vs work list · ⚠ Can't be undone"],
-  pri_approve: ["Yes, approve the PRI additional claims our job filed",
-                "Checked vs work list · ⚠ Can't be undone"],
+  prireg_approve: ["Yes, approve every PRI claim listed as Submitted for the branch",
+                   "Preview checked first · ⚠ Can't be undone"],
+  pri_approve: ["Yes, approve every PRI claim listed as Submitted for the branch",
+                "Preview checked first · ⚠ Can't be undone"],
   isclaim: ["Yes, file IS claims for every account the portal lists as Pending",
             "Disb → 31-03-2026 · IS = lower of max claim / Int Sub Amt · ⚠ Can't be undone"],
   isclaim_approve: ["Yes, approve every IS claim listed as Submitted for the branch",

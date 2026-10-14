@@ -81,7 +81,7 @@ def our_claims(rows, idx) -> dict:
 
 
 def read_preview(page) -> dict:
-    for _ in range(100):
+    for _ in range(200):                     # up to ~10 s, every 50 ms
         d = page.evaluate("""() => {
             const out = {};
             for (const l of document.querySelectorAll('p.dataPreviewLabel')) {
@@ -95,7 +95,7 @@ def read_preview(page) -> dict:
         }""")
         if d.get("Claim No.") and d.get("Applicable PRI"):
             return d
-        page.wait_for_timeout(100)
+        page.wait_for_timeout(50)
     raise RuntimeError("PRI claim preview never populated")
 
 
@@ -105,6 +105,15 @@ def check_claim(d: dict, row: dict, mine: dict) -> list[str]:
         probs.append(f"preview account {d.get('Account No.')!r} != row {row['acct']}")
     if d.get("Claim No.", "").strip() != row["claim"]:
         probs.append(f"preview claim {d.get('Claim No.')!r} != row {row['claim']}")
+    if mine.get("any"):                       # a claim in the list not filed by our job: the portal's own limits
+        portal, max_allowed = money_to_float(d.get("Applicable PRI")), money_to_float(d.get("Maximum Allowed Claim"))
+        if portal <= 0:
+            probs.append("applicable PRI is 0")
+        if max_allowed > 0 and portal > max_allowed + 0.005:
+            probs.append(f"applicable PRI {portal:.2f} > Maximum Allowed Claim {max_allowed:.2f}")
+        if not re.search(r"SUBMITTED", d.get("_status", ""), re.I):
+            probs.append(f"status {d.get('_status')!r}")
+        return probs
     if mine["acct"] != row["acct"]:
         probs.append(f"our claim {row['claim']} was for account {mine['acct']}")
     portal, max_allowed = money_to_float(d.get("Applicable PRI")), money_to_float(d.get("Maximum Allowed Claim"))
@@ -198,7 +207,8 @@ def main(limit: int, assume_yes: bool):
     header, rows, idx = f.load_rows()
     ours = our_claims(rows, idx)
     sol = Path(f.INPUT_CSV).parent.parent.name
-    print(f"[pri] {RECORDS_CSV}: {len(ours)} PRI claims filed by our job (only these, after checks, get approved)")
+    print(f"[pri] {RECORDS_CSV}: {len(ours)} PRI claims filed by our job (full checks); every other Submitted "
+          f"PRI claim in the list is approved too, after the portal's own limits")
     with sync_playwright() as p:
         ctx = p.chromium.launch_persistent_context(f.profile(PROFILE_DIR), headless=f.HEADLESS, slow_mo=f.SLOWMO_MS,
                                                    viewport=None, args=f.BROWSER_ARGS)
@@ -261,8 +271,10 @@ def main(limit: int, assume_yes: bool):
                 if not cand:
                     break
             row = cand[0]
-            mine = ours.get(row["claim"])
-            if not mine:                         # filed by hand / another job: never approved here
+            # every PRI claim in the Submitted list is approved (user, 14-10-2026): ours with the full checks,
+            # others (filed by hand / another computer) with the portal's own limits
+            mine = ours.get(row["claim"]) or {"acct": row["acct"], "any": True}
+            if not mine:
                 seen.add(row["claim"])
                 skipped += 1
                 continue
