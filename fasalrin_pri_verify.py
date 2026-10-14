@@ -152,7 +152,32 @@ def check_claim(d: dict, row: dict, mine: dict) -> list[str]:
 # ----------------------------------------------------------------------------
 # several tabs at once (same login): while one tab waits for the portal, the others work
 # ----------------------------------------------------------------------------
-TABS = max(1, int(os.environ.get("FASALRIN_TABS") or 3))   # FASALRIN_TABS=1: one tab, as before
+# extra tabs: off by default - the portal keeps the login PER TAB (extra tabs open logged out, 14-10-2026).
+# For speed run the same approval on several dashboards (ports) instead: each reserves a claim before opening it.
+TABS = max(1, int(os.environ.get("FASALRIN_TABS") or 1))
+
+
+def reserve(claim: str) -> bool:
+    """Reserve a claim for this job before opening it (a small file next to the records, made atomically):
+    False when another dashboard's job has it. A reservation older than 3 minutes is stale (a stopped job; one approval takes seconds)."""
+    d = os.path.join(os.path.dirname(APPROVALS_CSV) or ".", ".taken")
+    os.makedirs(d, exist_ok=True)
+    p = os.path.join(d, re.sub(r"\W", "", claim) or "x")
+    for _ in range(2):
+        try:
+            fd = os.open(p, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.write(fd, f"{os.getpid()} {time.time():.0f}".encode())
+            os.close(fd)
+            return True
+        except FileExistsError:
+            try:
+                if time.time() - os.path.getmtime(p) > 3 * 60:
+                    os.remove(p)                 # stale: take it over
+                    continue
+            except OSError:
+                pass
+            return False
+    return False
 
 
 def preview_once(page) -> dict:
@@ -253,6 +278,8 @@ def parallel_approve(ctx, page, ours, limit, cnt, taken):
                         continue
                     row = rows[0]
                     taken.add(row["claim"])
+                    if not reserve(row["claim"]):        # another dashboard has it
+                        continue
                     t.update(row=row, mine=ours.get(row["claim"]) or {"acct": row["acct"], "any": True},
                              t0=now, empty=0, confirmed=False)
                     pg.locator("table tbody tr", has_text=row["claim"]).first.locator(
@@ -486,6 +513,9 @@ def main(limit: int, assume_yes: bool):
                 if not cand:
                     break
             row = cand[0]
+            if not reserve(row["claim"]):            # another dashboard's job has this claim
+                seen.add(row["claim"])
+                continue
             # every PRI claim in the Submitted list is approved (user, 14-10-2026): ours with the full checks,
             # others (filed by hand / another computer) with the portal's own limits
             mine = ours.get(row["claim"]) or {"acct": row["acct"], "any": True}

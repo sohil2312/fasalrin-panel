@@ -58,20 +58,29 @@ def _pid_alive(pid: int) -> bool:
         return False
 
 
-def busy_elsewhere(csv_name: str) -> str:
-    """The port of another dashboard whose running job is on the same branch, '' if none."""
+# approval jobs that may run on SEVERAL dashboards for the same branch at once (each reserves a claim before
+# opening it, so two dashboards never take the same one); every other job keeps a branch to itself
+SHARED_JOBS = {"pri_approve", "prireg_approve"}
+
+
+def busy_elsewhere(csv_name: str, kind: str = "") -> str:
+    """The port of another dashboard whose running job is on the same branch, '' if none (or when both jobs are
+    the same shared approval job)."""
     me, sd = str(PORT), sol_dir_of(csv_name)
     for p in RUNNING_DIR.glob("*.txt") if RUNNING_DIR.exists() else []:
         if p.stem == me:
             continue
         try:
-            pid_s, other = p.read_text(encoding="utf-8").split("\n", 1)
+            pid_s, other, *rest = p.read_text(encoding="utf-8").split("\n")
         except (OSError, ValueError):
             continue
+        other_kind = rest[0].strip() if rest else ""
         if not _pid_alive(int(pid_s)):
             p.unlink(missing_ok=True)                  # that job has ended
             continue
         if other.strip() == csv_name or (sd and sol_dir_of(other.strip()) == sd):
+            if kind in SHARED_JOBS and other_kind == kind and other.strip() == csv_name:
+                continue                               # the same approval on the same list: shared, allowed
             return p.stem
     return ""
 JOBS = {
@@ -264,7 +273,7 @@ def start_job(kind: str, csv_name: str, answer: str, limit: int = 0, retry_rever
     want, got = JOB_SCHEME.get(kind, "regular"), branches.scheme_of(ROOT / csv_name)
     if want != got:                                   # never run a job on another scheme's work list
         return f"this job needs an {SCHEME_NAME[want]} work list (picked: {SCHEME_NAME[got]})"
-    other = busy_elsewhere(csv_name)
+    other = busy_elsewhere(csv_name, kind)
     if other:
         return (f"this branch has a job running on the dashboard at localhost:{other}: "
                 f"run another branch here, or wait for that job")
@@ -297,7 +306,7 @@ def start_job(kind: str, csv_name: str, answer: str, limit: int = 0, retry_rever
                    started=time.time(), ended=None, stop_requested=False, forced=False)
         try:                                         # other dashboards see which branch is busy here
             RUNNING_DIR.mkdir(exist_ok=True)
-            (RUNNING_DIR / f"{PORT}.txt").write_text(f"{proc.pid}\n{csv_name}", encoding="utf-8")
+            (RUNNING_DIR / f"{PORT}.txt").write_text(f"{proc.pid}\n{csv_name}\n{kind}", encoding="utf-8")
         except OSError:
             pass
     return None
