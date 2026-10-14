@@ -390,7 +390,111 @@ def review_and_approve(page, row, mine, disb, stage):
     return "APPROVED", f"claim {no} IS {d.get('Applicable IS')}"
 
 
+# ---- read-only trace of what APPROVE sends (first approvals of a run): shapes only, never values / tokens ----
+TRACE_FILE = "logs/approve_trace.json"
+TRACE_MAX = 2                                  # approvals traced per run
+_trace = {"on": False, "n": 0, "events": [], "pages": set()}
+
+
+def _shape(v, depth=0):
+    """What a value looks like, without the value: field names, types, lengths."""
+    if depth > 4:
+        return "..."
+    if isinstance(v, dict):
+        return {k: _shape(x, depth + 1) for k, x in list(v.items())[:40]}
+    if isinstance(v, list):
+        return [f"list of {len(v)}"] + ([_shape(v[0], depth + 1)] if v else [])
+    if isinstance(v, str):
+        if len(v) > 40 and re.fullmatch(r"[A-Za-z0-9+/=_\-]+", v):
+            return f"opaque text, {len(v)} chars (looks encrypted / encoded)"
+        return f"text, {len(v)} chars"
+    return type(v).__name__
+
+
+def _body_shape(text: str):
+    if not text:
+        return "empty"
+    import json as _j
+    try:
+        return {"json": _shape(_j.loads(text))}
+    except ValueError:
+        pass
+    t = text.strip()
+    if re.fullmatch(r"[A-Za-z0-9+/=_\-\s]+", t) and len(t) > 40:
+        return f"opaque text, {len(t)} chars (looks encrypted / encoded)"
+    if "=" in t and "&" in t:
+        return {"form fields": [x.split("=")[0] for x in t.split("&")][:30]}
+    return f"text, {len(t)} chars"
+
+
+def trace_attach(page):
+    """Listen (read only) to the page's requests; recorded only while a traced approval is on."""
+    if id(page) in _trace["pages"]:
+        return
+    _trace["pages"].add(id(page))
+
+    def on_req(req):
+        if not _trace["on"] or req.resource_type not in ("xhr", "fetch"):
+            return
+        try:
+            body = req.post_data or ""
+        except Exception:
+            body = ""
+        _trace["events"].append({"t": round(time.time() - _trace["t0"], 2), "kind": "request", "method": req.method,
+                                 "path": re.sub(r"\d{6,}", "<n>", req.url.split("?")[0]),
+                                 "header_names": sorted(k for k in req.headers.keys() if not k.startswith(":"))[:30],
+                                 "body": _body_shape(body)})
+
+    def on_resp(resp):
+        if not _trace["on"] or resp.request.resource_type not in ("xhr", "fetch"):
+            return
+        try:
+            text = resp.text()
+        except Exception:
+            text = ""
+        _trace["events"].append({"t": round(time.time() - _trace["t0"], 2), "kind": "response", "status": resp.status,
+                                 "path": re.sub(r"\d{6,}", "<n>", resp.url.split("?")[0]),
+                                 "content_type": resp.headers.get("content-type", ""), "body": _body_shape(text)})
+    try:
+        page.on("request", on_req)
+        page.on("response", on_resp)
+    except Exception:
+        pass
+
+
+def trace_start(page):
+    if _trace["n"] >= TRACE_MAX:
+        return
+    trace_attach(page)
+    _trace.update(on=True, t0=time.time(), events=[])
+
+
+def trace_stop():
+    if not _trace["on"]:
+        return
+    _trace["on"] = False
+    _trace["n"] += 1
+    import json as _j
+    try:
+        os.makedirs(os.path.dirname(TRACE_FILE), exist_ok=True)
+        old = _j.load(open(TRACE_FILE, encoding="utf-8")) if os.path.exists(TRACE_FILE) else []
+        old.append({"time": time.strftime("%Y-%m-%d %H:%M:%S"), "events": _trace["events"]})
+        _j.dump(old[-6:], open(TRACE_FILE, "w", encoding="utf-8"), indent=1)
+        print(f"    [trace] APPROVE: {sum(1 for e in _trace['events'] if e['kind'] == 'request')} request(s) recorded "
+              f"(shapes only) -> {TRACE_FILE}", flush=True)
+    except Exception:
+        pass
+
+
 def approve_one(page, row) -> str:
+    trace_start(page)                            # read only: what the APPROVE / CONFIRM clicks send
+    try:
+        return _approve_one(page, row)
+    finally:
+        trace_stop()
+
+
+def _approve_one(page, row) -> str:
     page.locator("button:visible", has_text=BTN("APPROVE")).first.click()
     # APPROVE -> CONFIRM -> "Claim application No. <no> has been approved successfully." -> OK (confirmed route)
     confirm = page.locator(".modal-content:visible button", has_text=BTN("CONFIRM"))

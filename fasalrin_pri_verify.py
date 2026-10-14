@@ -407,6 +407,87 @@ def wait_rows(page, seconds) -> bool:
     return True
 
 
+# ---- in-browser waits: the browser says the moment a screen is ready (no Python polling round trips).
+# The trace showed the portal approves in ~0.06 s: the seconds are the screens, not the server. ----
+JS_PREVIEW_READY = r"""() => {
+    if (!location.pathname.includes('claim-application-preview')) return false;
+    const btn = [...document.querySelectorAll('button')].some(b => b.offsetParent !== null && /^\s*APPROVE\s*$/i.test(b.innerText));
+    if (!btn) return false;
+    const val = re => { for (const l of document.querySelectorAll('p.dataPreviewLabel')) {
+        if (!re.test(l.innerText.trim())) continue;
+        let v = l.nextElementSibling; while (v && !/darkText/.test(v.className)) v = v.nextElementSibling;
+        return v && v.innerText.trim(); } return ''; };
+    return !!(val(/^Claim No\.?$/i) && val(/^Applicable PRI$/i));
+}"""
+JS_MODAL_STEP = r"""() => {
+    const ms = [...document.querySelectorAll('.modal-content')].filter(m => m.offsetParent !== null);
+    const t = ms.map(m => m.innerText).join(' | ');
+    if (/approved successfully/i.test(t)) return 'done';
+    const c = ms.flatMap(m => [...m.querySelectorAll('button')]).find(b => /^\s*CONFIRM\s*$/i.test(b.innerText));
+    if (c) { c.click(); return 'confirm'; }
+    return false;
+}"""
+JS_APPROVED = r"""() => [...document.querySelectorAll('.modal-content')].filter(m => m.offsetParent !== null)
+    .some(m => /approved successfully/i.test(m.innerText))"""
+JS_CLICK_OK = r"""() => {
+    const ms = [...document.querySelectorAll('.modal-content')].filter(m => m.offsetParent !== null);
+    const b = ms.flatMap(m => [...m.querySelectorAll('button')]).find(b => /^\s*OK\s*$/i.test(b.innerText));
+    if (b) b.click(); return !!b;
+}"""
+JS_NO_MODAL = "() => ![...document.querySelectorAll('.modal-content')].some(m => m.offsetParent !== null)"
+JS_LIST_READY = r"""() => location.pathname.includes('claim-application-list')
+    && [...document.querySelectorAll('table tbody tr')].some(tr => /^\d{6,}$/.test((tr.children[1] || {}).innerText || '')
+       || [...tr.children].some(td => /^\d{12,}$/.test(td.innerText.trim())))"""
+
+
+def fast_preview(page, row):
+    """REVIEW -> the preview with its values (waited for inside the browser)."""
+    tr = page.locator("table tbody tr", has_text=row["claim"]).first
+    tr.locator("button", has_text=BTN("REVIEW")).first.evaluate("b => b.click()")
+    page.wait_for_function(JS_PREVIEW_READY, timeout=int(f.LIMITS.limit("pri preview") * 1000))
+
+
+def fast_approve(page, row) -> str:
+    """APPROVE -> CONFIRM -> 'approved successfully' -> OK, each popup handled the moment it shows."""
+    page.locator("button:visible", has_text=BTN("APPROVE")).first.evaluate("b => b.click()")
+    # CONFIRM is clicked EXACTLY ONCE (inside the browser, the moment it shows); then only the success text
+    st = page.wait_for_function(JS_MODAL_STEP, timeout=f.STUCK_TIMEOUT_S * 1000).json_value()
+    if st != "done":
+        page.wait_for_function(JS_APPROVED, timeout=f.STUCK_TIMEOUT_S * 1000)
+    txt = cv.modal_text(page)
+    m = re.search(r"Claim application No\.?\s*(\d+)", txt, re.I)
+    page.evaluate(JS_CLICK_OK)
+    try:
+        page.wait_for_function(JS_NO_MODAL, timeout=5000)
+    except Exception:
+        pass
+    return m.group(1) if m else row["claim"]
+
+
+JS_WHERE = "() => (" + JS_LIST_READY + ")() ? 'list' : (location.pathname.includes('claim-application-preview') && (" + JS_NO_MODAL + ")() ? 'preview' : false)"
+
+
+def fast_back_to_list(page):
+    """After OK: the list (the portal reloads it by itself) or still the preview -> BACK at once. Waited for
+    inside the browser; anything else -> BACK / PROCEED as before."""
+    try:
+        where = page.wait_for_function(JS_WHERE, timeout=4000).json_value()
+    except Exception:
+        where = None
+    if where == "list":
+        return
+    if where == "preview":
+        back = page.locator("button:visible", has_text=BTN("BACK"))
+        if back.count():
+            back.first.evaluate("b => b.click()")
+            try:
+                page.wait_for_function(JS_LIST_READY, timeout=5000)
+                return
+            except Exception:
+                pass
+    refresh_list(page)
+
+
 def refresh_list(page):
     """After an approval: BACK to the list; when the list is there with rows that is enough (the approved claim
     is skipped as seen). Only an empty / missing list is reloaded (PROCEED), never the whole dashboard route."""
@@ -529,10 +610,9 @@ def main(limit: int, assume_yes: bool):
             print(f"\r[{approved + errors + 1:>4}] {row['claim']}  acct {row['acct']}  checking...   ", end="", flush=True)
             T.reset()
             try:
-                tr = page.locator("table tbody tr", has_text=row["claim"]).first
-                tr.locator("button", has_text=BTN("REVIEW")).first.click()
-                f.LIMITS.wait(page, "pri preview", lambda: "/claim-application-preview" in page.url and
-                              page.locator("button:visible", has_text=BTN("APPROVE")).count(), "claim preview")
+                t_open = time.time()
+                fast_preview(page, row)                  # waited for inside the browser
+                f.LIMITS.obs["pri preview"].append(time.time() - t_open)
                 T.mark("review")
                 d = read_preview(page)
                 T.mark("preview")
@@ -546,7 +626,7 @@ def main(limit: int, assume_yes: bool):
                     print(f"\r[{approved + errors:>4}] {row['claim']}  acct {row['acct']}  MISMATCH  {'; '.join(probs)[:120]}", flush=True)
                     continue
                 stage["s"] = "approving"
-                no = cv.approve_one(page, row)
+                no = fast_approve(page, row)
                 T.mark("approve")
                 stage["s"] = "approved"              # recorded below: a later error is not 'check on portal'
                 approved += 1
@@ -554,8 +634,7 @@ def main(limit: int, assume_yes: bool):
                 log(row["acct"], row["claim"], "APPROVED", f"claim {no} PRI {d.get('Applicable PRI')}")
                 print(f"\r[{approved + errors:>4}] {row['claim']}  acct {row['acct']}  APPROVED   | approved {approved}"
                       f"  mismatch {mismatched}  errors {errors}", flush=True)
-                if "/claim-application-list" not in page.url or not cv.list_rows(page):
-                    refresh_list(page)           # in place, not via the dashboard
+                fast_back_to_list(page)              # the portal's own list reload, else BACK / PROCEED
                 T.mark("list")
                 print(T.line(), flush=True)
             except KeyboardInterrupt:
