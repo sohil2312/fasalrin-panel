@@ -80,6 +80,9 @@ def our_claims(rows, idx) -> dict:
     return ours
 
 
+T = f.StepTimer()                     # seconds per step of each approval -> the log and the panel
+
+
 def read_preview(page) -> dict:
     for _ in range(200):                     # up to ~10 s, every 50 ms
         d = page.evaluate("""() => {
@@ -144,6 +147,202 @@ def check_claim(d: dict, row: dict, mine: dict) -> list[str]:
     if not re.search(r"SUBMITTED", d.get("_status", ""), re.I):
         probs.append(f"status {d.get('_status')!r}")
     return probs
+
+
+# ----------------------------------------------------------------------------
+# several tabs at once (same login): while one tab waits for the portal, the others work
+# ----------------------------------------------------------------------------
+TABS = max(1, int(os.environ.get("FASALRIN_TABS") or 3))   # FASALRIN_TABS=1: one tab, as before
+
+
+def preview_once(page) -> dict:
+    """The preview's label/value pairs right now (empty if not shown yet) - one look, no waiting."""
+    try:
+        return page.evaluate("""() => {
+            const out = {};
+            for (const l of document.querySelectorAll('p.dataPreviewLabel')) {
+                let v = l.nextElementSibling;
+                while (v && !/darkText/.test(v.className)) v = v.nextElementSibling;
+                if (v) out[l.innerText.trim()] = v.innerText.trim();
+            }
+            const st = [...document.querySelectorAll('span.fw-bold')].map(e => e.innerText.trim()).find(t => /Claim Status/i.test(t));
+            if (st) out['_status'] = st;
+            return out;
+        }""")
+    except Exception:
+        return {}
+
+
+def safe_rows(page):
+    """The list rows, or None while the page is loading / navigating (then the tab just looks again)."""
+    try:
+        return cv.list_rows(page)
+    except Exception:
+        return None
+
+
+def _click(page, selector, text):
+    page.locator(selector, has_text=BTN(text)).first.click()
+
+
+def open_tabs(ctx, page, n):
+    """The first tab + up to n-1 more in the same login, each on the Submitted PRI list. A tab that is not
+    logged in is closed (the portal then keeps logins per tab): the job goes on with the tabs it has."""
+    tabs = [page]
+    for i in range(1, n):
+        try:
+            t = cv.guard_page(ctx.new_page())
+            t.goto(f.BASE, wait_until="domcontentloaded")
+            try:
+                wait_for(t, lambda: t.locator('ul#menu, input[type="password"]').count() > 0, 20, "page")
+            except StuckError:
+                pass
+            if f.is_logged_out(t):
+                print(f"[tabs] tab {i + 1} is not logged in (the portal keeps logins per tab): going on with "
+                      f"{len(tabs)} tab(s)", flush=True)
+                t.close()
+                break
+            f.dismiss_ok_dialogs(t)
+            f.no_scroll(t)
+            open_list(t)
+            tabs.append(t)
+        except Exception as e:
+            print(f"[tabs] could not open tab {i + 1} ({type(e).__name__}): going on with {len(tabs)} tab(s)", flush=True)
+            break
+    print(f"[tabs] approving with {len(tabs)} tab(s) at once", flush=True)
+    return tabs
+
+
+def parallel_approve(ctx, page, ours, limit, cnt, taken):
+    """Approve the Submitted list with several tabs, one step per tab in turn (a step = a click or a look at the
+    screen, never a wait). Returns 'done', or 'fallback' (logged out / tabs failing: go on with one tab)."""
+    tabs = [{"p": t, "state": "IDLE", "n": i + 1, "empty": 0} for i, t in enumerate(open_tabs(ctx, page, TABS))]
+    if len(tabs) < 2:
+        return "fallback"
+    streak = 0
+    while True:
+        stopping = os.path.exists(f.STOP_FLAG) or (limit and cnt["approved"] + sum(1 for t in tabs if t["state"] not in ("IDLE", "DONE")) >= limit)
+        busy = [t for t in tabs if t["state"] != "DONE"]
+        if not busy:
+            return "done"
+        if stopping and all(t["state"] in ("IDLE", "DONE") for t in tabs):
+            if os.path.exists(f.STOP_FLAG):
+                print("\n[stop] stop requested - stopping between claims")
+            return "done"
+        for t in busy:
+            pg, now = t["p"], time.time()
+            try:
+                st = t["state"]
+                if st == "IDLE":
+                    if stopping:
+                        continue
+                    shown = safe_rows(pg)
+                    if shown is None:                    # still loading: look again next turn
+                        continue
+                    rows = [r for r in shown if r["status"].lower() == "submitted" and r["claim"]
+                            and r["claim"] not in taken]
+                    if not rows:
+                        t["empty"] += 1
+                        if t["empty"] > 2:               # this tab sees nothing more to take
+                            t["state"] = "DONE"
+                            continue
+                        if any(r["claim"] in taken for r in shown) and cv.goto_next_page(pg):
+                            continue                     # the page is all taken: the next page
+                        _click(pg, "button:visible", "PROCEED")
+                        t.update(state="WAIT_LIST", until=now + 30)
+                        continue
+                    row = rows[0]
+                    taken.add(row["claim"])
+                    t.update(row=row, mine=ours.get(row["claim"]) or {"acct": row["acct"], "any": True},
+                             t0=now, empty=0, confirmed=False)
+                    pg.locator("table tbody tr", has_text=row["claim"]).first.locator(
+                        "button", has_text=BTN("REVIEW")).first.click()
+                    t.update(state="WAIT_PREVIEW", until=now + f.LIMITS.limit("pri preview"))
+                elif st == "WAIT_PREVIEW":
+                    d = preview_once(pg) if "/claim-application-preview" in pg.url else {}
+                    if d.get("Claim No.") and d.get("Applicable PRI") and pg.locator(
+                            "button:visible", has_text=BTN("APPROVE")).count():
+                        f.LIMITS.obs["pri preview"].append(now - t["t0"])
+                        row, probs = t["row"], check_claim(d, t["row"], t["mine"])
+                        if probs:
+                            shot(pg, f"pri_mismatch_{row['acct']}")
+                            cnt["mismatched"] += 1
+                            log(row["acct"], row["claim"], "MISMATCH", "; ".join(probs))
+                            print(f"[tab{t['n']}] {row['claim']}  acct {row['acct']}  MISMATCH  {'; '.join(probs)[:120]}", flush=True)
+                            _click(pg, "button:visible", "BACK")
+                            t.update(state="WAIT_BACK", until=now + 15)
+                        else:
+                            t["d"] = d
+                            _click(pg, "button:visible", "APPROVE")
+                            t.update(state="WAIT_APPROVE", until=now + f.STUCK_TIMEOUT_S)
+                    elif now > t["until"]:
+                        raise StuckError("claim preview did not open")
+                elif st == "WAIT_APPROVE":
+                    txt = cv.modal_text(pg)
+                    if re.search(r"approved successfully", txt, re.I):
+                        row = t["row"]
+                        m = re.search(r"Claim application No\.?\s*(\d+)", txt, re.I)
+                        cnt["approved"] += 1
+                        streak = 0
+                        log(row["acct"], row["claim"], "APPROVED",
+                            f"claim {m.group(1) if m else row['claim']} PRI {t['d'].get('Applicable PRI')}")
+                        print(f"[{cnt['approved'] + cnt['errors']:>4}] {row['claim']}  acct {row['acct']}  APPROVED   "
+                              f"| approved {cnt['approved']}  mismatch {cnt['mismatched']}  errors {cnt['errors']}"
+                              f"   (tab {t['n']}, {now - t['t0']:.1f} s)", flush=True)
+                        _click(pg, ".modal-content:visible button", "OK")
+                        t.update(state="AFTER_OK", until=now + 5)
+                    elif not t["confirmed"] and pg.locator(".modal-content:visible button", has_text=BTN("CONFIRM")).count():
+                        _click(pg, ".modal-content:visible button", "CONFIRM")
+                        t["confirmed"] = True
+                    elif now > t["until"]:
+                        raise StuckError("no 'approved successfully' after APPROVE")
+                elif st == "AFTER_OK":
+                    if not cv.modal_text(pg).strip() or now > t["until"]:
+                        if "/claim-application-preview" in pg.url and pg.locator("button:visible", has_text=BTN("BACK")).count():
+                            _click(pg, "button:visible", "BACK")
+                            t.update(state="WAIT_BACK", until=now + 15)
+                        elif "/claim-application-list" in pg.url and pg.locator("button:visible", has_text=BTN("PROCEED")).count():
+                            _click(pg, "button:visible", "PROCEED")
+                            t.update(state="WAIT_LIST", until=now + 30)
+                        else:
+                            open_list(pg)
+                            t["state"] = "IDLE"
+                elif st == "WAIT_BACK":
+                    if "/claim-application-list" in pg.url and pg.locator("button:visible", has_text=BTN("PROCEED")).count():
+                        _click(pg, "button:visible", "PROCEED")
+                        t.update(state="WAIT_LIST", until=now + 30)
+                    elif now > t["until"]:
+                        open_list(pg)
+                        t["state"] = "IDLE"
+                elif st == "WAIT_LIST":
+                    if safe_rows(pg) or "No record(s) found" in f.body_text(pg) or now > t["until"]:
+                        t["state"] = "IDLE"
+            except KeyboardInterrupt:
+                raise
+            except Exception as e:
+                import traceback
+                with open("errors.log", "a") as ef:
+                    ef.write(f"\n===== {time.strftime('%Y-%m-%d %H:%M:%S')} PRI-VERIFY tab {t['n']} state={t['state']}\n")
+                    ef.write(traceback.format_exc())
+                cnt["errors"] += 1
+                streak += 1
+                msg = (str(e).splitlines() or [type(e).__name__])[0][:100]
+                row = t.get("row") or {}
+                print(f"\n    [exc] tab {t['n']} {t['state']} {type(e).__name__}: {msg}", flush=True)
+                if t["state"] in ("WAIT_APPROVE", "AFTER_OK") and row:      # APPROVE clicked: never again blindly
+                    log(row.get("acct", ""), row.get("claim", ""), "CHECK_PORTAL", f"error after APPROVE: {msg}")
+                try:
+                    if pg.is_closed() or f.is_logged_out(pg):
+                        print("[tabs] a tab is logged out / closed: going on with one tab", flush=True)
+                        return "fallback"
+                    open_list(pg)
+                    t["state"] = "IDLE"
+                except Exception:
+                    t["state"] = "DONE"
+                if streak >= cv.MAX_ERROR_STREAK:
+                    print(f"\n[tabs] {streak} errors in a row: going on with one tab", flush=True)
+                    return "fallback"
+        page.wait_for_timeout(40)
 
 
 def open_list(page):
@@ -253,7 +452,23 @@ def main(limit: int, assume_yes: bool):
         approved = errors = mismatched = skipped = 0
         fails: dict[str, int] = {}
         seen: set[str] = set()
-        while not (limit and approved >= limit):
+        more = True                                  # the one-tab loop below: only when the tabs did not finish
+        if TABS > 1:
+            cnt = {"approved": 0, "errors": 0, "mismatched": 0}
+            res = parallel_approve(ctx, page, ours, limit, cnt, seen)
+            approved, errors, mismatched = cnt["approved"], cnt["errors"], cnt["mismatched"]
+            for extra in ctx.pages[1:]:              # back to one tab
+                try:
+                    extra.close()
+                except Exception:
+                    pass
+            page = ctx.pages[0] if ctx.pages else ctx.new_page()
+            more = res != "done"
+            if more:
+                if f.is_logged_out(page):
+                    f.require_login(page)
+                open_list(page)
+        while more and not (limit and approved >= limit):
             if os.path.exists(f.STOP_FLAG):
                 print("\n[stop] stop requested - stopping between claims")
                 break
@@ -280,12 +495,15 @@ def main(limit: int, assume_yes: bool):
                 continue
             stage = {"s": "review"}
             print(f"\r[{approved + errors + 1:>4}] {row['claim']}  acct {row['acct']}  checking...   ", end="", flush=True)
+            T.reset()
             try:
                 tr = page.locator("table tbody tr", has_text=row["claim"]).first
                 tr.locator("button", has_text=BTN("REVIEW")).first.click()
-                wait_for(page, lambda: "/claim-application-preview" in page.url and
-                         page.locator("button:visible", has_text=BTN("APPROVE")).count(), f.STUCK_TIMEOUT_S, "claim preview")
+                f.LIMITS.wait(page, "pri preview", lambda: "/claim-application-preview" in page.url and
+                              page.locator("button:visible", has_text=BTN("APPROVE")).count(), "claim preview")
+                T.mark("review")
                 d = read_preview(page)
+                T.mark("preview")
                 probs = check_claim(d, row, mine)
                 if probs:
                     shot(page, f"pri_mismatch_{row['acct']}")
@@ -297,6 +515,7 @@ def main(limit: int, assume_yes: bool):
                     continue
                 stage["s"] = "approving"
                 no = cv.approve_one(page, row)
+                T.mark("approve")
                 approved += 1
                 seen.add(row["claim"])
                 log(row["acct"], row["claim"], "APPROVED", f"claim {no} PRI {d.get('Applicable PRI')}")
@@ -304,6 +523,8 @@ def main(limit: int, assume_yes: bool):
                       f"  mismatch {mismatched}  errors {errors}", flush=True)
                 if "/claim-application-list" not in page.url or not cv.list_rows(page):
                     refresh_list(page)           # in place, not via the dashboard
+                T.mark("list")
+                print(T.line(), flush=True)
             except KeyboardInterrupt:
                 raise
             except Exception as e:
@@ -326,6 +547,8 @@ def main(limit: int, assume_yes: bool):
                     f.require_login(page)
                 f.reload_to_dashboard(page)
                 open_list(page)
+        if T.summary():
+            print("\n" + T.summary())
         if limit and approved >= limit:            # say why the run ended
             print(f"\n[stop] 'At most {limit}' reached: {approved} approved this run. Empty At most = all.")
         elif not os.path.exists(f.STOP_FLAG):
