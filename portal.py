@@ -107,8 +107,8 @@ ADDITIONAL_JOBS = {"additional", "additional_approve"}
 JOB_SCHEME = {"additional": "additional", "additional_approve": "additional", "pri": "pri", "pri_approve": "pri",
               "prireg": "prireg", "prireg_approve": "prireg", "fresh": "fresh",
               "isclaim": "isclaim", "isclaim_approve": "isclaim"}
-SCHEME_NAME = {"regular": "IS regular", "additional": "IS additional", "pri": "PRI additional", "prireg": "PRI regular",
-               "fresh": "IS fresh", "isclaim": "IS regular claim"}
+SCHEME_NAME = {"regular": "Loan Applications", "additional": "IS Additional Claims", "pri": "PRI additional", "prireg": "PRI regular",
+               "fresh": "IS fresh", "isclaim": "IS Regular Claims"}
 MASTER_KINDS = ("regular", "additional", "pri", "prireg", "fresh", "isclaim")
 SIDE_FILES = ("_progress.csv", "_approvals.csv")
 

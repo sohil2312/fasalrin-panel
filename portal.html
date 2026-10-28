@@ -519,11 +519,11 @@
     <!-- one switch for the whole dashboard: each tab shows only its own master, lists, jobs and totals -->
     <nav class="tabs" role="tablist" aria-label="Scheme">
       <button role="tab" class="tab" data-tab="isclaim" aria-selected="true"
-        title="1.5% IS claims on 2025-26 loans, from the IS regular claim file">IS claim</button>
+        title="1.5% IS claims on 2025-26 loans, from the IS regular claim file">IS Regular Claims</button>
       <button role="tab" class="tab" data-tab="regular" aria-selected="false"
-        title="2025-26 loans · entry, approval, IS claims">IS regular</button>
+        title="2025-26 loan applications · entry and approval">Loan Applications</button>
       <button role="tab" class="tab" data-tab="additional" aria-selected="false"
-        title="Rollover claims for 2024-25 loans">IS additional</button>
+        title="Rollover claims for 2024-25 loans">IS Additional Claims</button>
       <button role="tab" class="tab" data-tab="pri" aria-selected="false"
         title="3% PRI claims for 2024-25 loans">PRI additional</button>
       <button role="tab" class="tab" data-tab="prireg" aria-selected="false"
@@ -541,11 +541,11 @@
   <div class="grid">
     <!-- master list -> branch work lists -->
     <section class="card" id="masterCard">
-      <h2 id="masterTitle">1 · Master file — IS regular (all branches)</h2>
+      <h2 id="masterTitle">1 · Master file — Loan Applications (all branches)</h2>
       <div class="choices" style="display:none">
-        <label class="choice"><input type="radio" name="mtype" value="regular" checked>IS regular master
+        <label class="choice"><input type="radio" name="mtype" value="regular" checked>Loan application pendency master
           <small>pendency file: Status Pending rows</small></label>
-        <label class="choice"><input type="radio" name="mtype" value="additional">IS additional master
+        <label class="choice"><input type="radio" name="mtype" value="additional">IS Additional Claims master
           <small>rollover claims: rows with Int Sub Amt &gt; 0</small></label>
         <label class="choice"><input type="radio" name="mtype" value="pri">PRI additional master
           <small>3% PRI claims: rows with 3% PRI &gt; 0</small></label>
@@ -650,18 +650,18 @@
 
     <!-- start a job -->
     <section class="card" id="startCard">
-      <h2 id="startTitle">4 · Start — IS regular</h2>
+      <h2 id="startTitle">4 · Start — Loan Applications</h2>
       <div class="choices" style="display:none">
-        <label class="choice"><input type="radio" name="scheme" value="regular" checked>IS regular
-          <small>2025-26 loans: entry, approval, IS claims</small></label>
-        <label class="choice"><input type="radio" name="scheme" value="additional">IS additional
+        <label class="choice"><input type="radio" name="scheme" value="regular" checked>Loan Applications
+          <small>2025-26 loan applications: entry and approval</small></label>
+        <label class="choice"><input type="radio" name="scheme" value="additional">IS Additional Claims
           <small>rollover claims for 2024-25 loans</small></label>
         <label class="choice"><input type="radio" name="scheme" value="pri">PRI additional
           <small>3% PRI claims for 2024-25 loans</small></label>
         <label class="choice"><input type="radio" name="scheme" value="fresh">IS fresh</label>
         <label class="choice"><input type="radio" name="scheme" value="prireg">PRI regular
           <small>3% PRI claims for 2025-26 loans</small></label>
-        <label class="choice"><input type="radio" name="scheme" value="isclaim">IS claim</label>
+        <label class="choice"><input type="radio" name="scheme" value="isclaim">IS Regular Claims</label>
       </div>
 
       <label>Job</label>
@@ -670,10 +670,6 @@
           <small><svg class="ic"><use href="#i-user"/></svg>Branch User</small></label>
         <label class="choice" data-scheme="regular"><input type="radio" name="kind" value="approve">Approve applications
           <small><svg class="ic"><use href="#i-shield"/></svg>Branch Head</small></label>
-        <label class="choice" data-scheme="regular"><input type="radio" name="kind" value="claim">File IS claims
-          <small><svg class="ic"><use href="#i-user"/></svg>Branch User · approved loans</small></label>
-        <label class="choice" data-scheme="regular"><input type="radio" name="kind" value="claim_approve">Approve IS claims
-          <small><svg class="ic"><use href="#i-shield"/></svg>Branch Head · all Submitted</small></label>
         <label class="choice" data-scheme="additional"><input type="radio" name="kind" value="additional">File IS additional claims
           <small><svg class="ic"><use href="#i-user"/></svg>Branch User · rollover</small></label>
         <label class="choice" data-scheme="additional"><input type="radio" name="kind" value="additional_approve">Approve IS additional claims
@@ -688,9 +684,9 @@
           <small><svg class="ic"><use href="#i-user"/></svg>Branch User · FY 25-26</small></label>
         <label class="choice" data-scheme="prireg"><input type="radio" name="kind" value="prireg_approve">Approve PRI regular claims
           <small><svg class="ic"><use href="#i-shield"/></svg>Branch Head · all Submitted</small></label>
-        <label class="choice" data-scheme="isclaim"><input type="radio" name="kind" value="isclaim">File IS claims
+        <label class="choice" data-scheme="isclaim"><input type="radio" name="kind" value="isclaim">File regular IS claims
           <small><svg class="ic"><use href="#i-user"/></svg>Branch User · pending on portal</small></label>
-        <label class="choice" data-scheme="isclaim"><input type="radio" name="kind" value="isclaim_approve">Approve IS claims
+        <label class="choice" data-scheme="isclaim"><input type="radio" name="kind" value="isclaim_approve">Approve regular IS claims
           <small><svg class="ic"><use href="#i-shield"/></svg>Branch Head · all Submitted</small></label>
       </div>
 
@@ -875,8 +871,8 @@ function showCols(t) {
   $("colsBody").innerHTML = cols.map(c => `<tr><td><b>${esc(c[0])}</b></td><td>${esc(c[1])}</td><td>${esc(c[2])}</td></tr>`).join("");
   $("colsMsg").textContent = "Paste into cell A1 of a blank Excel sheet · format Account / Aadhaar columns as Text";
 }
-const SCHEME_NAME = {regular: "IS regular", additional: "IS additional", pri: "PRI additional", prireg: "PRI regular",
-                     fresh: "IS fresh", isclaim: "IS claim"};
+const SCHEME_NAME = {regular: "Loan Applications", additional: "IS Additional Claims", pri: "PRI additional", prireg: "PRI regular",
+                     fresh: "IS fresh", isclaim: "IS Regular Claims"};
 function scheme() { const s = document.querySelector('input[name="scheme"]:checked'); return s ? s.value : "regular"; }
 let lastKind = null, lastScheme = null;
 function refreshForm(locked) {
@@ -990,24 +986,24 @@ function learnBranches(list) {
 const solName = sol => branchNames[sol] ? `${sol} · ${branchNames[sol]}` : `SOL ${sol}`;
 const csvLabel = c => {
   let m = c.match(/^branches\/(\d+)\/\1\.csv$/);
-  if (m) return `${solName(m[1])} — IS regular work list`;
+  if (m) return `${solName(m[1])} — Loan Applications work list`;
   m = c.match(/^branches\/(\d+)\/additional\/\1_additional\.csv$/);
-  if (m) return `${solName(m[1])} — IS additional work list`;
+  if (m) return `${solName(m[1])} — IS Additional Claims work list`;
   m = c.match(/^branches\/(\d+)\/pri\/\1_pri\.csv$/);
   if (m) return `${solName(m[1])} — PRI additional work list`;
   m = c.match(/^branches\/(\d+)\/fresh\/\1_fresh\.csv$/);
   if (m) return `${solName(m[1])} — IS fresh work list`;
   m = c.match(/^branches\/(\d+)\/isclaim\/\1_isclaim\.csv$/);
-  if (m) return `${solName(m[1])} — IS claim list`;
+  if (m) return `${solName(m[1])} — IS Regular Claims work list`;
   m = c.match(/^branches\/(\d+)\/prireg\/\1_prireg\.csv$/);
   return m ? `${solName(m[1])} — PRI regular work list` : c;
 };
 function mtype() { return scheme(); }              // the master card follows the tab
 
-// ---- the IS regular | IS additional tabs switch the whole dashboard ----
+// Each tab switches the whole dashboard to its own workflow.
 function setTab(t, save = true) {
   const shown = [...document.querySelectorAll(".tab")].filter(b => !b.hidden).map(b => b.dataset.tab);
-  if (!shown.includes(t)) t = shown[0] || "isclaim";      // a hidden tab (IS regular / IS fresh) opens IS claim
+  if (!shown.includes(t)) t = shown[0] || "isclaim";      // Fall back when a saved tab is hidden.
   document.querySelectorAll(".tab").forEach(b => b.setAttribute("aria-selected", String(b.dataset.tab === t)));
   document.querySelector(`input[name="scheme"][value="${t}"]`).checked = true;
   document.querySelector(`input[name="mtype"][value="${t}"]`).checked = true;
@@ -1026,8 +1022,8 @@ function setTab(t, save = true) {
                 prireg: "<b>3% PRI</b> &gt; 0", fresh: "<b>New farmers</b> (not in portal)",
                 isclaim: "<b>Every account</b> · claimed if Pending on portal"}[t]],
     ["i-check", "Progress kept"],
-    ...(t === "prireg" ? [["i-alert", "Loan via IS regular first", "warn"]] : []),
-    ...(t === "isclaim" ? [["i-link", "Same claim records as IS regular"]] : []),
+    ...(t === "prireg" ? [["i-alert", "Approve loan in Loan Applications first", "warn"]] : []),
+    ...(t === "isclaim" ? [["i-link", "Regular claims · existing claim history preserved"]] : []),
     ...(t === "fresh" ? [["i-layers", "CC004 crop · CC043 dairy"], ["i-alert", "Crop rows need LAND AREA", "warn"]] : [])]);
   masterChoice = null; csvChoice = null; lastScheme = null;
   $("buildMsg").textContent = ""; $("mMsg").textContent = ""; $("exportMsg").textContent = ""; $("fixMsg").textContent = "";
@@ -1081,7 +1077,7 @@ async function buildSol(sol) {
     loadMasters(); poll(); return;
   }
   if (r.type === "isclaim") {
-    $("buildMsg").innerHTML = `<b>${esc(r.sol)} ${esc(r.branch)}</b> (IS claim): <b>${r.master_rows} accounts</b>
+    $("buildMsg").innerHTML = `<b>${esc(r.sol)} ${esc(r.branch)}</b> (IS Regular Claims): <b>${r.master_rows} accounts</b>
       (${r.with_is} with Int Sub Amt, ${r.zero_is} with 0) → ${r.claimed} claimed (${r.approved} approved),
       ${r.waiting} not pending on portal, ${r.hand} hand work` + (r.check ? `, ${r.check} check on portal` : "")
       + `, <b>${r.to_do} to do</b>.`;
@@ -1097,7 +1093,7 @@ async function buildSol(sol) {
     loadMasters(); poll(); return;
   }
   if (r.type === "additional") {
-    $("buildMsg").innerHTML = `<b>${esc(r.sol)} ${esc(r.branch)}</b> (IS additional): ${r.master_rows} rows in master,
+    $("buildMsg").innerHTML = `<b>${esc(r.sol)} ${esc(r.branch)}</b> (IS Additional Claims): ${r.master_rows} rows in master,
       ${r.zero_int_sub} with Int Sub Amt 0 left out → <b>${r.with_int_sub} in the work list</b>:
       ${r.claimed} claimed, ${r.closed_or_not_found} not found/closed, ${r.errors} errors` + (r.check ? `, ${r.check} check on portal` : "")
       + `, <b>${r.to_do} to do</b>.`;

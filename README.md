@@ -130,16 +130,26 @@ that the approved number is the row's. Approving cannot be undone.
 - An application failing twice → `ERROR` in `Approval`, skipped this run. Rerun continues with what is left.
 - Own browser profile (`.pw_profile_head`), so it can run next to the entry script.
 
-## Panel tabs: IS regular | IS additional
-The panel has two tabs; each shows only its own master, branch lists, jobs and totals.
+## Applications and IS claims
 
-**IS regular** (2025-26 loans) — pendency master, `branches/<SOL>/<SOL>.csv`:
-| Job | Login | Script | Records |
-|---|---|---|---|
-| Enter applications | Branch User | `fasalrin_regular.py` | `<SOL>_progress.csv` |
-| Approve applications | Branch Head | `fasalrin_verify.py` | `<SOL>_approvals.csv` |
-| File IS claims | Branch User | `fasalrin_claim.py` | `<SOL>_claims.csv` |
-| Approve IS claims | Branch Head | `fasalrin_claim_verify.py` | `<SOL>_claim_approvals.csv` |
+The panel separates three workflows. Existing work lists and claim records keep their paths.
+
+| Tab | Input | Jobs |
+|---|---|---|
+| Loan Applications | Loan pendency master, pending rows | Enter applications; approve applications |
+| IS Regular Claims | 1.5% IS Regular FY 2025-26 master | File regular IS claims; approve regular IS claims |
+| IS Additional Claims | 1.5% IS Additional FY 2025-26 master | File rollover IS claims; approve rollover IS claims |
+
+Regular flow: enter loan application → approve application → file regular IS claim → approve claim.
+Additional flow: existing FY 2024-25 claim → continue rollover → file additional claim → approve claim.
+Branch User enters/files; Branch Head approves.
+
+Loan Applications uses `fasalrin_regular.py` and `fasalrin_verify.py`, with work lists
+`branches/<SOL>/<SOL>.csv`. IS Regular Claims uses `fasalrin_claim.py` and
+`fasalrin_claim_verify.py`, with work lists `branches/<SOL>/isclaim/<SOL>_isclaim.csv`.
+It includes every branch account in the claim master and checks eligibility on the portal.
+Existing `<SOL>_claims.csv` and `<SOL>_claim_approvals.csv` records remain shared with
+older application-list claim jobs, preserving previously filed claims.
 
 IS claim filing (approved loans only): IS/PRI Claim Application → FY / IS / PENDING → search account → ADD →
 IS Submission Type **PARTIAL** first (unlocks the dates) → start = **Disb. Date** (a prefilled date wins) →
