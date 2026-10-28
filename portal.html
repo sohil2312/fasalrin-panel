@@ -691,11 +691,9 @@
       </div>
 
       <div class="q" id="qEntry">
-        <label class="choice" style="margin-top:12px"><input type="checkbox" id="retryReverify">
-          Retry Aadhaar-reverify rows once
-          <small><svg class="ic"><use href="#i-retry"/></svg>One more try · then hand work</small></label>
+        <p class="muted">Aadhaar re-verification failures are automatically retried once.</p>
         <label class="choice" style="margin-top:8px"><input type="checkbox" id="onlyReverify">
-          Only those rows this run
+          Only Aadhaar-reverify rows this run
           <small><svg class="ic"><use href="#i-arrow"/></svg>New rows wait</small></label>
       </div>
       <div id="approvalBranch" style="display:none">
@@ -894,8 +892,7 @@ function refreshForm(locked) {
     if ($("csv").value && listScheme($("csv").value) !== scheme()) { $("csv").value = ""; csvChoice = null; }
   }
   $("qEntry").classList.toggle("show", kind() === "entry");
-  if (kind() !== lastKind) $("retryReverify").checked = $("onlyReverify").checked = false;   // never carried over
-  if ($("onlyReverify").checked) $("retryReverify").checked = true;
+  if (kind() !== lastKind) $("onlyReverify").checked = false;   // never carried over
   $("qApprove").classList.toggle("show", !!CONFIRM[kind()]);
   $("othersBox").style.display = "none";          // every Submitted IS claim is approved now (no option)
   if (kind() !== lastKind) $("othersOk").checked = false;      // never carried over to another job
@@ -923,7 +920,6 @@ $("startBtn").onclick = async () => {
   $("startErr").textContent = "";
   const lim = CONFIRM[kind()] ? parseInt($("limitN").value || "0", 10) || 0 : 0;
   const res = await post("/api/start", {kind: kind(), csv: directApproval() ? "" : $("csv").value, approval_sol: directApproval() ? $("approvalSol").value.trim() : "", answer: answer(), limit: lim,
-                                        retry_reverify: kind() === "entry" && $("retryReverify").checked,
                                         only_reverify: kind() === "entry" && $("onlyReverify").checked,
                                         others: ["claim_approve", "isclaim_approve"].includes(kind()) && $("othersOk").checked});
   if (res.error) $("startErr").textContent = res.error;

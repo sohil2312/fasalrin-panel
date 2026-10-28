@@ -17,8 +17,9 @@ Progress: `tr '\r' '\n' < run.log | grep -E "^\["`
 
 Options: `--start-row N` (only CSV rows N and later this session; row 1 = header). Needs `openpyxl` in the venv.
 
-Rows marked `AADHAAR_REVERIFY` before the REVERIFY step existed: tick **Retry Aadhaar-reverify rows once**
-(and **Only those rows this run**) on the Enter applications job; a row that still fails gets "(retried once)".
+Rows marked `AADHAAR_REVERIFY` are automatically retried once on the next application-entry run,
+in both the panel and command line. A row that still fails gets "(retried once)" and is not retried again.
+Use **Only Aadhaar-reverify rows this run** to process just those retries; otherwise new rows run too.
 Other hand-work reasons can be reset to `RETRY` in the CSV totals card (IS regular only).
 
 ## Entries made outside the script (by hand, other users)
@@ -70,7 +71,7 @@ Stop any time with Ctrl+C — the CSV is saved after every row, rerun to resume.
   `CHECK_PORTAL:*` (logged out after CONFIRM — check by hand)
 
 ## Manual follow-up list
-Filter CSV `Status` = `NO_ACTIVITY`, `AADHAAR_REVERIFY`, `APPLICANT_INCOMPLETE`, `NOT_IN_SYSTEM`. Script never retries these.
+Filter CSV `Status` = `NO_ACTIVITY`, `AADHAAR_REVERIFY`, `APPLICANT_INCOMPLETE`, `NOT_IN_SYSTEM`. Aadhaar-reverify rows get one automatic retry; the other reasons need manual correction.
 
 ## Handled automatically
 - Primary Activity blank → "Agri Crops"

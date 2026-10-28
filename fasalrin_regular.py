@@ -76,7 +76,7 @@ INPUT_CSV   = "3119_IS_REG.csv"      # default; override on the command line: py
 OUTPUT_CSV  = INPUT_CSV              # same file = update in place (a .bak is kept)
 PROGRESS_CSV = ""                    # append-only log of every entry: <input>_progress.csv (set at start)
 START_ROW   = 0                      # --start-row N: only rows N.. this session (0 = all)
-RETRY_REVERIFY = False               # --retry-reverify: AADHAAR_REVERIFY rows not retried before go once more
+RETRY_REVERIFY = True                # AADHAAR_REVERIFY rows automatically get one extra attempt
 ONLY_REVERIFY = False                # --only-reverify: this run does only those rows (new rows wait)
 REVERIFY_RETRY_DETAIL = "Aadhaar reverify: retried once"
 REVERIFY_RETRIED = "(retried once)"  # added to Detail when the retry hits AADHAAR_REVERIFY again: never again
@@ -1508,7 +1508,7 @@ def main():
         # rows[i] is CSV/Excel row i+1 (row 1 = header); --start-row N leaves rows 2..N-1 alone
         first = max(START_ROW - 1, 1)
 
-        # --retry-reverify: every AADHAAR_REVERIFY row not retried before is tried once more this run
+        # Every AADHAAR_REVERIFY row not retried before is tried once more this run
         reverify_retry = set()
         if RETRY_REVERIFY:
             for r in rows[first:]:
@@ -1689,10 +1689,9 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser(description="Enter Fasalrin IS Regular loan applications from a CSV.")
     ap.add_argument("csv", nargs="?", default=INPUT_CSV,
                     help=f"input CSV, updated in place (default: {INPUT_CSV})")
-    ap.add_argument("--retry-reverify", action="store_true",
-                    help="try every AADHAAR_REVERIFY row once more (rows already retried once are left)")
+    ap.add_argument("--retry-reverify", action="store_true", default=True, help=argparse.SUPPRESS)
     ap.add_argument("--only-reverify", action="store_true",
-                    help="with --retry-reverify: this run does only those rows")
+                    help="this run does only Aadhaar-reverify retries (new rows wait)")
     ap.add_argument("--start-row", type=int, default=0, metavar="N",
                     help="only work on CSV rows N and later (row 1 = header); finished rows are still skipped")
     args = ap.parse_args()

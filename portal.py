@@ -261,8 +261,7 @@ def running() -> bool:
     return bool(job) and job["proc"].poll() is None
 
 
-def start_job(kind: str, csv_name: str, answer: str, limit: int = 0, retry_reverify: bool = False,
-              only_reverify: bool = False, others: bool = False, approval_sol: str = "") -> str | None:
+def start_job(kind: str, csv_name: str, answer: str, limit: int = 0, only_reverify: bool = False, others: bool = False, approval_sol: str = "") -> str | None:
     """Returns an error text, or None when started."""
     if kind not in JOBS:
         return "unknown job"
@@ -296,8 +295,6 @@ def start_job(kind: str, csv_name: str, answer: str, limit: int = 0, retry_rever
             args += ["--yes"]                     # approval / claim jobs: confirmed in the panel
         elif only_reverify:
             args += ["--only-reverify"]           # only the Aadhaar-reverify rows, once more
-        elif retry_reverify:
-            args += ["--retry-reverify"]          # Aadhaar-reverify rows not retried before: once more
         if kind != "entry" and limit > 0:
             args += ["--limit", str(limit)]
         if (others or direct_approval) and kind in ("claim_approve", "isclaim_approve"):
@@ -731,7 +728,7 @@ class Handler(BaseHTTPRequestHandler):
             except (TypeError, ValueError):
                 limit = 0
             err = start_job(body.get("kind", ""), body.get("csv", ""), body.get("answer", ""), limit,
-                            bool(body.get("retry_reverify")), bool(body.get("only_reverify")),
+                            bool(body.get("only_reverify")),
                             bool(body.get("others")), str(body.get("approval_sol") or "").strip())
             return self._send(400 if err else 200, {"error": err} if err else {"ok": True})
         if self.path in ("/api/report_upload", "/api/report_match"):
