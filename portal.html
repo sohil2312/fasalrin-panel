@@ -698,6 +698,11 @@
           Only those rows this run
           <small><svg class="ic"><use href="#i-arrow"/></svg>New rows wait</small></label>
       </div>
+      <div id="approvalBranch" style="display:none">
+        <label for="approvalSol">Branch SOL code</label>
+        <input id="approvalSol" inputmode="numeric" maxlength="4" pattern="[0-9]{4}" placeholder="e.g. 3106">
+        <p class="muted">No master upload or branch list build needed. Log in as this branch’s Branch Head. Approval records stay with this SOL.</p>
+      </div>
       <div class="q" id="qApprove">
         <label class="choice" style="margin-top:12px"><input type="checkbox" id="approveOk">
           <span id="okText">Yes, approve every application listed as Submitted for the branch</span>
@@ -875,6 +880,7 @@ const SCHEME_NAME = {regular: "Loan Applications", additional: "IS Additional Cl
                      fresh: "IS fresh", isclaim: "IS Regular Claims"};
 function scheme() { const s = document.querySelector('input[name="scheme"]:checked'); return s ? s.value : "regular"; }
 let lastKind = null, lastScheme = null;
+const directApproval = () => ["approve", "isclaim_approve"].includes(kind());
 function refreshForm(locked) {
   // the scheme decides which jobs and which work lists can be picked
   document.querySelectorAll('#startCard .choice[data-scheme]').forEach(l => {
@@ -897,10 +903,15 @@ function refreshForm(locked) {
     $("approveOk").checked = false; [$("okText").textContent, $("okSmall").textContent] = CONFIRM[kind()];
   }
   lastKind = kind();
-  $("startBtn").disabled = locked || !$("csv").value || !kind() || !answer();
+  const direct = directApproval();
+  $("approvalBranch").style.display = direct ? "" : "none";
+  $("masterCard").style.display = $("buildCard").style.display = direct || scheme() === "fresh" ? "none" : "";
+  $("repCard").style.display = direct ? "none" : "";
+  $("startBtn").disabled = locked || (direct ? !/^[0-9]{4}$/.test($("approvalSol").value.trim()) : !$("csv").value) || !kind() || !answer();
   document.querySelectorAll("#startCard input, #startCard select").forEach(e => e.disabled = locked);
   $("upBtn").disabled = locked || !$("upFile").files.length;
 }
+$("approvalSol").addEventListener("input", () => refreshForm(busy));
 document.querySelectorAll("#startCard input").forEach(e => e.addEventListener("change", () => refreshForm(busy)));
 $("csv").addEventListener("change", () => { csvChoice = $("csv").value; poll(); });
 
@@ -911,7 +922,7 @@ async function post(url, body) {
 $("startBtn").onclick = async () => {
   $("startErr").textContent = "";
   const lim = CONFIRM[kind()] ? parseInt($("limitN").value || "0", 10) || 0 : 0;
-  const res = await post("/api/start", {kind: kind(), csv: $("csv").value, answer: answer(), limit: lim,
+  const res = await post("/api/start", {kind: kind(), csv: directApproval() ? "" : $("csv").value, approval_sol: directApproval() ? $("approvalSol").value.trim() : "", answer: answer(), limit: lim,
                                         retry_reverify: kind() === "entry" && $("retryReverify").checked,
                                         only_reverify: kind() === "entry" && $("onlyReverify").checked,
                                         others: ["claim_approve", "isclaim_approve"].includes(kind()) && $("othersOk").checked});

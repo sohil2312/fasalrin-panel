@@ -292,7 +292,10 @@ def money_to_float(s: str) -> float:
     return float(re.sub(r"[^\d.]", "", s or "0") or 0)
 
 
-def load_rows():
+def load_rows(allow_missing=False):
+    if allow_missing and not os.path.exists(INPUT_CSV):
+        header = [COL_ACCT, COL_STATUS, COL_DL, COL_APPNO, COL_DETAIL]
+        return header, [header], {c: i for i, c in enumerate(header)}
     raw = open(INPUT_CSV, "rb").read().decode("utf-8-sig")
     rows = list(csv.reader(io.StringIO(raw, newline="")))
     header = rows[0]

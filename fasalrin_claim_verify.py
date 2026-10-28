@@ -248,6 +248,8 @@ def check_claim(d: dict, row: dict, mine: dict, disb: str) -> list[str]:
         probs.append(f"preview account {d.get('Account No.')!r} != row {row['acct']}")
     if d.get("Claim No.", "").strip() != row["claim"]:
         probs.append(f"preview claim {d.get('Claim No.')!r} != row {row['claim']}")
+    if re.match(r"\s*yes", d.get("Is Rollover Claim", ""), re.I):
+        probs.append("Is Rollover Claim = Yes (IS additional, not regular)")
     if mine.get("any"):                       # a claim in the list not filed by our job: the portal's own limits
         portal_is, max_allowed = money_to_float(d.get("Applicable IS")), money_to_float(d.get("Maximum Allowed Claim"))
         if portal_is <= 0:
@@ -259,8 +261,6 @@ def check_claim(d: dict, row: dict, mine: dict, disb: str) -> list[str]:
         return probs
     if mine["acct"] != row["acct"]:
         probs.append(f"our claim {row['claim']} was for account {mine['acct']}")
-    if re.match(r"\s*yes", d.get("Is Rollover Claim", ""), re.I):
-        probs.append("Is Rollover Claim = Yes (IS additional, not regular)")
     portal_is, max_allowed = money_to_float(d.get("Applicable IS")), money_to_float(d.get("Maximum Allowed Claim"))
     if mine.get("other"):                     # filed by hand / on another computer: never more than allowed
         if portal_is > mine["intsub"] + 0.005:
@@ -522,9 +522,9 @@ OTHERS = True                         # every Submitted IS claim in the list is 
                                       # list is empty"); claims our job filed also get the checks against our records
 
 
-def main(limit: int, assume_yes: bool):
+def main(limit: int, assume_yes: bool, branch_code=""):
     f.INPUT_CSV = f.OUTPUT_CSV
-    header, rows, idx = f.load_rows()
+    header, rows, idx = f.load_rows(allow_missing=bool(branch_code))
     ours = our_claims()
     disb_of = {r[idx[f.COL_ACCT]].strip(): r[idx[f.COL_DISB]].strip() for r in rows[1:]} if f.COL_DISB in idx else {}
     intsub_of = {r[idx[f.COL_ACCT]].strip(): money_to_float(r[idx["Int Sub Amt"]]) for r in rows[1:]} \
@@ -554,6 +554,9 @@ def main(limit: int, assume_yes: bool):
             f.dismiss_ok_dialogs(page)
         except Exception:
             pass
+        if branch_code and not f.require_role(page, "Branch Head"):
+            ctx.close()
+            return
         want = f.branch_of_list(rows, idx)
         if want:
             got = f.logged_in_branch(page)
@@ -698,6 +701,8 @@ def main(limit: int, assume_yes: bool):
                 if not cand:
                     break
             row = cand[0]
+            if branch_code and not row["acct"].startswith(branch_code):
+                raise RuntimeError(f"Wrong branch: account {row['acct']} does not belong to SOL {branch_code}; stopping")
             mine = ours.get(row["claim"]) or {"acct": row["acct"], "is": None, "any": True}
             if not mine:                                 # not filed by our IS regular claim script
                 seen.add(row["claim"])
@@ -770,8 +775,14 @@ if __name__ == "__main__":
     ap.add_argument("--yes", action="store_true", help="don't ask before approving (needed with NO_PROMPT=1)")
     ap.add_argument("--others", action="store_true",
                     help="also approve claims filed by hand / on another computer, after the checks against the claim file")
+    ap.add_argument("--branch-code", default="", help="four-digit SOL: approve without building a work list")
     args = ap.parse_args()
-    if not os.path.isfile(args.csv):
+    if args.branch_code and (not re.fullmatch(r"[0-9]{4}", args.branch_code)
+                            or f.Path(args.csv).as_posix() not in {
+                                f"branches/{args.branch_code}/{args.branch_code}.csv",
+                                f"branches/{args.branch_code}/isclaim/{args.branch_code}_isclaim.csv"}):
+        ap.error("branch code must match the branch approval path")
+    if not args.branch_code and not os.path.isfile(args.csv):
         ap.error(f"CSV not found: {args.csv}")
     if f.NO_PROMPT and not args.yes:
         ap.error("NO_PROMPT=1 cannot ask: pass --yes")
@@ -780,7 +791,7 @@ if __name__ == "__main__":
     base = fasalrin_claim.records_base(args.csv)          # IS regular work list or IS regular claim list
     CLAIMS_CSV, APPROVALS_CSV = base + "_claims.csv", base + "_claim_approvals.csv"
     try:
-        OTHERS = args.others
-        main(args.limit, args.yes)
+        OTHERS = args.others or bool(args.branch_code)
+        main(args.limit, args.yes, args.branch_code)
     except KeyboardInterrupt:
         print("\n[quit] interrupted — approvals so far are recorded; rerun to continue")

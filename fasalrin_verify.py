@@ -74,8 +74,8 @@ def load_approvals() -> dict:
 class Sheet:
     """The input CSV (same file the entry script keeps) with the approval columns."""
 
-    def __init__(self):
-        self.header, self.rows, _ = f.load_rows()
+    def __init__(self, allow_missing=False):
+        self.header, self.rows, _ = f.load_rows(allow_missing=allow_missing)
         for col in (COL_APPROVAL, COL_APPROVED_ON):
             if col not in self.header:
                 self.header.append(col)
@@ -272,8 +272,8 @@ def approve_one(page, row) -> str:
 # ----------------------------------------------------------------------------
 # main
 # ----------------------------------------------------------------------------
-def main(limit: int, assume_yes: bool):
-    sheet = Sheet()
+def main(limit: int, assume_yes: bool, branch_code=""):
+    sheet = Sheet(allow_missing=bool(branch_code))
 
     # approvals file first: fill in what the CSV is missing
     done = load_approvals()
@@ -377,6 +377,8 @@ def main(limit: int, assume_yes: bool):
                 if not rows:
                     break
             row = rows[0]
+            if branch_code and not row["acct"].startswith(branch_code):
+                raise RuntimeError(f"Wrong branch: account {row['acct']} does not belong to SOL {branch_code}; stopping")
             print(f"\r[{approved + errors + 1:>4}] {row['app']}  acct {row['acct']}  approving...   ", end="", flush=True)
             try:
                 got = approve_one(page, row)
@@ -427,8 +429,12 @@ if __name__ == "__main__":
     ap.add_argument("csv", help="the entry script's CSV (approval columns are added to it)")
     ap.add_argument("--limit", type=int, default=0, help="approve at most N this run (0 = all)")
     ap.add_argument("--yes", action="store_true", help="don't ask before approving (needed with NO_PROMPT=1)")
+    ap.add_argument("--branch-code", default="", help="four-digit SOL: approve without building a work list")
     args = ap.parse_args()
-    if not os.path.isfile(args.csv):
+    if args.branch_code and (not re.fullmatch(r"[0-9]{4}", args.branch_code)
+                            or f.Path(args.csv).as_posix() != f"branches/{args.branch_code}/{args.branch_code}.csv"):
+        ap.error("branch code must match the branch approval path")
+    if not args.branch_code and not os.path.isfile(args.csv):
         ap.error(f"CSV not found: {args.csv}")
     if f.NO_PROMPT and not args.yes:
         ap.error("NO_PROMPT=1 cannot ask: pass --yes")
@@ -437,6 +443,6 @@ if __name__ == "__main__":
     base = os.path.splitext(args.csv)[0]
     APPROVALS_CSV = base + "_approvals.csv"
     try:
-        main(args.limit, args.yes)
+        main(args.limit, args.yes, args.branch_code)
     except KeyboardInterrupt:
         print("\n[quit] interrupted — approvals so far are recorded; rerun to continue")

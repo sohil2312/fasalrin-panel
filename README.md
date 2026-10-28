@@ -144,6 +144,14 @@ Regular flow: enter loan application → approve application → file regular IS
 Additional flow: existing FY 2024-25 claim → continue rollover → file additional claim → approve claim.
 Branch User enters/files; Branch Head approves.
 
+For **Approve applications** and **Approve regular IS claims**, enter the four-digit branch SOL
+and tick the confirmation. No master upload or branch list build is required. Log in as that
+branch's Branch Head. Each portal account must belong to the entered SOL; a mismatch stops the run.
+Existing work lists and claim records are read when available. Approval logs keep their existing
+branch paths; no empty work list is created. Without local claim data, approvals use the portal
+preview checks (account, claim number, amount limits, Submitted status, and non-rollover claim).
+Filing jobs and additional-claim approvals still use their existing work lists and checks.
+
 Loan Applications uses `fasalrin_regular.py` and `fasalrin_verify.py`, with work lists
 `branches/<SOL>/<SOL>.csv`. IS Regular Claims uses `fasalrin_claim.py` and
 `fasalrin_claim_verify.py`, with work lists `branches/<SOL>/isclaim/<SOL>_isclaim.csv`.

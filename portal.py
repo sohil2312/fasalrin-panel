@@ -262,11 +262,17 @@ def running() -> bool:
 
 
 def start_job(kind: str, csv_name: str, answer: str, limit: int = 0, retry_reverify: bool = False,
-              only_reverify: bool = False, others: bool = False) -> str | None:
+              only_reverify: bool = False, others: bool = False, approval_sol: str = "") -> str | None:
     """Returns an error text, or None when started."""
     if kind not in JOBS:
         return "unknown job"
-    if csv_name not in input_csvs():
+    direct_approval = kind in {"approve", "claim_approve", "isclaim_approve"} and bool(approval_sol)
+    if approval_sol and (not direct_approval or not re.fullmatch(r"[0-9]{4}", approval_sol)):
+        return "enter the four-digit branch SOL for application or regular IS claim approval"
+    if direct_approval:
+        csv_name = (f"branches/{approval_sol}/isclaim/{approval_sol}_isclaim.csv"
+                    if kind == "isclaim_approve" else f"branches/{approval_sol}/{approval_sol}.csv")
+    elif csv_name not in input_csvs():
         return "pick a CSV"
     if kind != "entry" and answer != "yes":
         return "tick the confirmation"
@@ -283,6 +289,9 @@ def start_job(kind: str, csv_name: str, answer: str, limit: int = 0, retry_rever
         STOP_FLAG.unlink(missing_ok=True)
         spec = dict(JOBS[kind], log=log_name(JOBS[kind]["log"]))
         args = [sys.executable, "-u", "-W", "ignore", spec["script"], csv_name]
+        if direct_approval:
+            (ROOT / csv_name).parent.mkdir(parents=True, exist_ok=True)
+            args += ["--branch-code", approval_sol]
         if kind != "entry":
             args += ["--yes"]                     # approval / claim jobs: confirmed in the panel
         elif only_reverify:
@@ -291,7 +300,7 @@ def start_job(kind: str, csv_name: str, answer: str, limit: int = 0, retry_rever
             args += ["--retry-reverify"]          # Aadhaar-reverify rows not retried before: once more
         if kind != "entry" and limit > 0:
             args += ["--limit", str(limit)]
-        if others and kind in ("claim_approve", "isclaim_approve"):
+        if (others or direct_approval) and kind in ("claim_approve", "isclaim_approve"):
             args += ["--others"]                  # also claims filed by hand / on another computer (checked)
         env = dict(os.environ, NO_PROMPT="1", PYTHONIOENCODING="utf-8", FASALRIN_INSTANCE=INSTANCE)
         if (ROOT / spec["log"]).exists():          # the previous run's log stays readable
@@ -723,7 +732,7 @@ class Handler(BaseHTTPRequestHandler):
                 limit = 0
             err = start_job(body.get("kind", ""), body.get("csv", ""), body.get("answer", ""), limit,
                             bool(body.get("retry_reverify")), bool(body.get("only_reverify")),
-                            bool(body.get("others")))
+                            bool(body.get("others")), str(body.get("approval_sol") or "").strip())
             return self._send(400 if err else 200, {"error": err} if err else {"ok": True})
         if self.path in ("/api/report_upload", "/api/report_match"):
             name = body.get("csv", "")
