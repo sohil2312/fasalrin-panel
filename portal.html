@@ -693,9 +693,6 @@
       </div>
       <div class="q" id="qEntry">
         <p class="muted">Aadhaar re-verification failures are automatically retried once.</p>
-        <label class="choice" style="margin-top:8px"><input type="checkbox" id="onlyReverify">
-          Only Aadhaar-reverify rows this run
-          <small><svg class="ic"><use href="#i-arrow"/></svg>New rows wait</small></label>
       </div>
       <div id="approvalBranch" style="display:none">
         <label for="approvalSol">Branch SOL code</label>
@@ -893,8 +890,7 @@ function scheme() { const s = document.querySelector('input[name="scheme"]:check
 let lastKind = null, lastScheme = null, entryPreview = null;
 const isEntry = () => ["entry", "entry_fresh"].includes(kind());
 function matchingPreview() {
-  return entryPreview && entryPreview.csv === $("csv").value && entryPreview.kind === kind()
-    && !!entryPreview.only_reverify === (kind() === "entry" && $("onlyReverify").checked);
+  return entryPreview && entryPreview.csv === $("csv").value && entryPreview.kind === kind();
 }
 function showEntryFilter() {
   $("entryFilter").style.display = isEntry() ? "" : "none";
@@ -929,7 +925,6 @@ function refreshForm(locked) {
     if ($("csv").value && listScheme($("csv").value) !== scheme()) { $("csv").value = ""; csvChoice = null; }
   }
   $("qEntry").classList.toggle("show", kind() === "entry");
-  if (kind() !== lastKind) $("onlyReverify").checked = false;   // never carried over
   $("qApprove").classList.toggle("show", !!CONFIRM[kind()]);
   $("limitRow").style.display = kind() === "entry_fresh" ? "none" : "";
   $("othersBox").style.display = "none";          // every Submitted IS claim is approved now (no option)
@@ -960,7 +955,6 @@ $("startBtn").onclick = async () => {
   $("startErr").textContent = "";
   const lim = CONFIRM[kind()] && kind() !== "entry_fresh" ? parseInt($("limitN").value || "0", 10) || 0 : 0;
   const res = await post("/api/start", {kind: kind(), csv: directApproval() ? "" : $("csv").value, approval_sol: directApproval() ? $("approvalSol").value.trim() : "", answer: answer(), limit: lim,
-                                        only_reverify: kind() === "entry" && $("onlyReverify").checked,
                                         others: ["claim_approve", "isclaim_approve"].includes(kind()) && $("othersOk").checked});
   if (res.error) $("startErr").textContent = res.error;
   poll();
@@ -1493,7 +1487,6 @@ async function poll() {
     if (csvChoice) params.set("csv", csvChoice);
     if (isEntry()) {
       params.set("entry_kind", kind());
-      if (kind() === "entry" && $("onlyReverify").checked) params.set("only_reverify", "1");
     }
     const q = "?" + params;
     render(await (await fetch("/api/status" + q)).json());
