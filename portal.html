@@ -156,6 +156,13 @@
   button.danger { color: var(--bad); background: var(--bad-soft); }
   button:disabled { opacity: .4; cursor: not-allowed; box-shadow: none; }
   .row { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 16px; align-items: center; }
+  #startActionRow { align-items: flex-end; }
+  #approvalBranch { flex: 0 0 120px; }
+  #approvalBranch label { margin: 0 0 6px; white-space: nowrap; }
+  #approvalSol { box-sizing: border-box; width: 100%; height: 44px; padding: 9px 12px; border: 2px solid var(--edge);
+                 border-radius: var(--r-sm); background: var(--card); color: var(--ink); font: inherit;
+                 font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: .04em; }
+  #startActionRow .primary { min-height: 44px; }
   .err { color: var(--bad); font-weight: 700; }
 
   /* numbers: the first tile of each group is the headline */
@@ -690,10 +697,6 @@
         <div id="entryFilterReasons"></div>
         <p id="entryFilterNote" class="muted"></p>
       </div>
-      <div id="approvalBranch" style="display:none">
-        <label for="approvalSol">Branch SOL code</label>
-        <input id="approvalSol" inputmode="numeric" maxlength="4" pattern="[0-9]{4}" placeholder="e.g. 3106">
-      </div>
       <div class="q" id="qApprove">
         <label class="choice" style="margin-top:12px"><input type="checkbox" id="approveOk">
           <span id="okText"></span>
@@ -705,7 +708,11 @@
           this run <small class="muted">· empty = all · 2 = test</small></label>
       </div>
 
-      <div class="row">
+      <div class="row" id="startActionRow">
+        <div id="approvalBranch" style="display:none">
+          <label for="approvalSol">Branch SOL</label>
+          <input id="approvalSol" type="text" inputmode="numeric" maxlength="4" pattern="[0-9]{4}" placeholder="e.g. 3106">
+        </div>
         <button class="primary" id="startBtn" disabled>Start</button>
         <span id="startErr" class="err"></span>
       </div>
