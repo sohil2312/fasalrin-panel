@@ -690,9 +690,6 @@
         <div id="entryFilterReasons"></div>
         <p id="entryFilterNote" class="muted"></p>
       </div>
-      <div class="q" id="qEntry">
-        <p class="muted">Aadhaar re-verification failures are automatically retried once.</p>
-      </div>
       <div id="approvalBranch" style="display:none">
         <label for="approvalSol">Branch SOL code</label>
         <input id="approvalSol" inputmode="numeric" maxlength="4" pattern="[0-9]{4}" placeholder="e.g. 3106">
@@ -907,8 +904,10 @@ function showEntryFilter() {
   $("entryFilterReasons").innerHTML = reasons.length
     ? '<table><thead><tr><th>Filter reason</th><th>Rows</th></tr></thead><tbody>'
       + reasons.map(([reason, count]) => `<tr><td>${esc(reason)}</td><td>${count}</td></tr>`).join("") + '</tbody></table>' : "";
-  $("entryFilterNote").textContent = (entryPreview.ready ? "Only ready rows will run. " : "No eligible rows to start. ")
-    + "Rows stay saved. One row may have multiple reasons; reason counts can exceed the filtered total.";
+  $("entryFilterNote").textContent = kind() === "entry"
+    ? (entryPreview.ready ? "" : "No eligible rows to start.")
+    : (entryPreview.ready ? "Only ready rows will run. " : "No eligible rows to start. ")
+      + "Rows stay saved. One row may have multiple reasons; reason counts can exceed the filtered total.";
 }
 const directApproval = () => ["approve", "isclaim_approve"].includes(kind());
 function refreshForm(locked) {
@@ -923,7 +922,6 @@ function refreshForm(locked) {
     [...$("csv").options].forEach(o => { o.hidden = !!o.value && listScheme(o.value) !== scheme(); });
     if ($("csv").value && listScheme($("csv").value) !== scheme()) { $("csv").value = ""; csvChoice = null; }
   }
-  $("qEntry").classList.toggle("show", kind() === "entry");
   $("qApprove").classList.toggle("show", !!CONFIRM[kind()]);
   $("limitRow").style.display = kind() === "entry_fresh" ? "none" : "";
   $("othersBox").style.display = "none";          // every Submitted IS claim is approved now (no option)
