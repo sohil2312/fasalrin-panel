@@ -74,6 +74,8 @@ def read_master(path, required=None) -> list[dict]:
             for n, r in enumerate(it):
                 if sum(1 for c in r if c not in (None, "")) >= 4:
                     head = [_cell(c) for c in r]
+                    if "NAME AS PER ADHAR" not in head:
+                        head = ["NAME AS PER ADHAR" if c == "NAME AR PER ADHAR" else c for c in head]
                     break
                 if n > 20:
                     break

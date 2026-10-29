@@ -4,9 +4,32 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 import branches
+import entry_filter
 
 
 class OptionalStatusTests(unittest.TestCase):
+    def test_import_accepts_misspelled_aadhaar_name_heading(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            master = Path(tmp) / 'master.xlsx'
+            master.touch()
+            header = list(branches.REGULAR_REQUIRED) + ['DOB', 'NAME AR PER ADHAR', 'GENDER',
+                'RELATIVE NAME', 'ADDRESS', 'VILLAGE', 'SURVEY NO', 'KHATA NO', 'LAND', 'Scheme Code']
+            values = ['3106', 'Example', '31060001', '123456789012', '01-04-2025', '1000',
+                '01-01-1980', 'Test Farmer', 'M', 'Relative', 'Address', 'Village', '1', '2', '0.25', 'CC004']
+            sheet = Mock()
+            sheet.iter_rows.side_effect = lambda **kw: iter([header, values])
+            workbook = Mock(worksheets=[sheet])
+            with patch('openpyxl.load_workbook', return_value=workbook), \
+                 patch('fasalrin_regular.aadhaar_valid', return_value=True), \
+                 patch.object(branches, '_cache', {}), patch.object(branches, 'ROOT', Path(tmp)), \
+                 patch.object(branches, 'BRANCHES', Path(tmp) / 'branches'), \
+                 patch.multiple(branches.f, INPUT_CSV='', OUTPUT_CSV='', PROGRESS_CSV='', REPORTS_DIR=Path(tmp)):
+                branches.build(master, '3106')
+                with branches.worklist_path('3106').open() as fh:
+                    built = list(csv.DictReader(fh))
+                self.assertEqual(built[0]['NAME AS PER ADHAR'], 'Test Farmer')
+                self.assertEqual(entry_filter.select_rows(built, 'fresh')[1]['ready'], 1)
+
     def test_missing_blank_and_explicit_status_in_import_and_build(self):
         for include_status in (False, True):
             with self.subTest(include_status=include_status), tempfile.TemporaryDirectory() as tmp:
