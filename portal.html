@@ -1072,8 +1072,9 @@ function setTab(t, save = true) {
   pendLabel = {regular: "pending in master", additional: "Int Sub Amt > 0", pri: "3% PRI > 0", prireg: "3% PRI > 0", fresh: "new farmers",
                isclaim: "Int Sub Amt > 0"}[t];
   solChoice = "";
-  $("mHelp").innerHTML = hints([
-    ["i-file", {regular: "<b>Pending / Draft</b> rows · blank Status = Pending", additional: "<b>Int Sub Amt</b> &gt; 0", pri: "<b>3% PRI</b> &gt; 0",
+  $("mHelp").style.display = t === "regular" ? "none" : "";
+  $("mHelp").innerHTML = t === "regular" ? "" : hints([
+    ["i-file", {additional: "<b>Int Sub Amt</b> &gt; 0", pri: "<b>3% PRI</b> &gt; 0",
                 prireg: "<b>3% PRI</b> &gt; 0", fresh: "<b>New farmers</b> (not in portal)",
                 isclaim: "<b>Every account</b> · claimed if Pending on portal"}[t]],
     ["i-check", "Progress kept"],
