@@ -592,7 +592,7 @@
 
     <!-- step 3: pick the branch work list, upload its approved report, match -->
     <section class="card span2" id="repCard">
-      <h2><span id="repTitle">3 · Select branch &amp; match approved report</span> <span class="muted" id="repFor"></span></h2>
+      <h2><span id="repTitle">3 · Select branch &amp; match approved report</span></h2>
       <div id="freshUp" style="display:none">
         <div class="row inline3" style="margin-top:0">
           <input type="file" id="fFile" accept=".xlsx,.csv" aria-label="Branch file">
@@ -1430,7 +1430,6 @@ async function loadReports(force = false) {
   if (!force && c === repFor) return;
   repFor = c; repPick = null;
   $("repMatchMsg").textContent = ""; $("repMsg").textContent = "";
-  $("repFor").textContent = isBranch ? "· " + csvLabel(c) : "";
   if (!isBranch) {
     $("anaBox").style.display = "none";
     $("repHelp").innerHTML = hints([["i-arrow", "Pick a branch first"]]);
