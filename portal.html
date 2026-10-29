@@ -1156,10 +1156,7 @@ async function buildSol(sol) {
     loadMasters(); poll(); return;
   }
   lastScheme = null;
-  $("buildMsg").innerHTML = `<b>${esc(r.sol)} ${esc(r.branch)}</b>: ${r.master_pending} in Excel (${r.mis_pending} pending + ${r.mis_draft} draft)
-    → <b>${r.to_do} to do</b>, <b>${r.finished} finished</b> (${r.approved} approved, ${r.finished - r.approved} submitted for approval;
-    ${r.on_portal} newly found on portal), ${r.hand} need hand work` + (r.check ? `, ${r.check} check on portal` : "")
-    + (r.other_branch ? `, ${r.other_branch} skipped (other branch account)` : "") + `. Reports: ${esc(r.reports_from)}.`;
+  $("buildMsg").textContent = "Work list ready.";
   csvChoice = r.csv.replace(/\\/g, "/"); loadMasters(); poll();
 }
 $("master").addEventListener("change", () => { masterChoice = $("master").value; loadMasters(); });
