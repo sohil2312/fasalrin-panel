@@ -247,3 +247,7 @@ These files ship with the ZIP and updates; no external download service is used.
 them directly from the extracted `samples` folder. The new claim templates contain headers only:
 add your branch rows starting at row 2. SOL, branch, and account cells are formatted as text.
 The panel itself still needs its local Python server for uploads and automation.
+
+The Loan Applications master does not require a `Status` column. Missing or blank values default
+to `Pending`. Explicit `Pending` / `Draft` rows are included; other statuses remain excluded.
+Existing application progress is still preserved when rebuilding a branch list.

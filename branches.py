@@ -50,7 +50,7 @@ def _cell(v) -> str:
 _cache: dict = {}
 
 
-REGULAR_REQUIRED = [*MASTER_COLS.values(), f.COL_ACCT, f.COL_AADH, f.COL_DISB, f.COL_DP]
+REGULAR_REQUIRED = [MASTER_COLS["sol"], MASTER_COLS["branch"], f.COL_ACCT, f.COL_AADH, f.COL_DISB, f.COL_DP]
 ADDITIONAL_REQUIRED = ["Sol ID", "Branch Name", f.COL_ACCT, "Int Sub Amt"]   # IS additional: no Status column
 
 
@@ -58,6 +58,7 @@ def read_master(path, required=None) -> list[dict]:
     """All rows of the master. The sheet used is the first whose header row (first row with >= 4 filled
     cells) has every `required` column, e.g. the IS additional file keeps its data in Sheet1 after a
     Sheet3 summary."""
+    regular_master = required is None or required == REGULAR_REQUIRED
     required = required or REGULAR_REQUIRED
     path = Path(path)
     key = (str(path), path.stat().st_mtime, tuple(required))
@@ -87,6 +88,9 @@ def read_master(path, required=None) -> list[dict]:
         wb.close()
     if rows is None:
         raise ValueError("master is missing columns: " + ", ".join(best_missing or required))
+    if regular_master:
+        for row in rows:
+            row["Status"] = row.get("Status") or "Pending"
     if len(_cache) > 3:                          # keep a few (regular + additional masters)
         _cache.clear()
     _cache[key] = rows

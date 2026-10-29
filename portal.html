@@ -544,7 +544,7 @@
       <h2 id="masterTitle">1 · Master file — Loan Applications (all branches)</h2>
       <div class="choices" style="display:none">
         <label class="choice"><input type="radio" name="mtype" value="regular" checked>Loan application pendency master
-          <small>pendency file: Status Pending rows</small></label>
+          <small>Status optional · blank means Pending</small></label>
         <label class="choice"><input type="radio" name="mtype" value="additional">IS Additional Claims master
           <small>rollover claims: rows with Int Sub Amt &gt; 0</small></label>
         <label class="choice"><input type="radio" name="mtype" value="pri">PRI additional master
@@ -849,7 +849,7 @@ const COLUMNS = {
     ["Account No.", "yes", "31060500000001 (Text)"], ["Cust id", "no", "R00000001"],
     ["Scheme Code", "yes", "CC004 crop loan · CC043 KCC AH"], ["Disb. Date", "yes", "18-03-2026 (dd-mm-yyyy)"],
     ["Repay. Date", "no", "31-03-2026"], ["DP", "yes", "122000 (more than 0)"], ["Int Sub Amt", "no", "64"],
-    ["Aadhaar No.", "yes", "12 digits (Text)"], ["Status", "yes", "Pending / Draft rows are worked"], ["PORTAL", "no", ""],
+    ["Aadhaar No.", "yes", "12 digits (Text)"], ["Status", "no", "Missing / blank = Pending; Pending / Draft rows are worked"], ["PORTAL", "no", ""],
     ["ADDRESS", "empty activity", "AT KARODIYA PO SARASADI , TA KADANA , … — village found from it"],
     ["SURVEY NO", "CC004, empty activity", "338"], ["KHATA NO", "CC004, empty activity", "147"],
     ["LAND", "CC004, empty activity", "0.25 (land area)"]],
@@ -1033,7 +1033,7 @@ function setTab(t, save = true) {
                isclaim: "Int Sub Amt > 0"}[t];
   solChoice = "";
   $("mHelp").innerHTML = hints([
-    ["i-file", {regular: "<b>Pending</b> rows", additional: "<b>Int Sub Amt</b> &gt; 0", pri: "<b>3% PRI</b> &gt; 0",
+    ["i-file", {regular: "<b>Pending / Draft</b> rows · blank Status = Pending", additional: "<b>Int Sub Amt</b> &gt; 0", pri: "<b>3% PRI</b> &gt; 0",
                 prireg: "<b>3% PRI</b> &gt; 0", fresh: "<b>New farmers</b> (not in portal)",
                 isclaim: "<b>Every account</b> · claimed if Pending on portal"}[t]],
     ["i-check", "Progress kept"],
