@@ -458,12 +458,7 @@
   .card { border-width: var(--bw); border-radius: var(--r); box-shadow: none; padding: 20px 22px; }
   .card > h2:first-child { font-size: 1.05rem; letter-spacing: -.01em; margin-bottom: 14px; }
   .card > h2:first-child::before { width: 12px; height: 12px; border-width: 2px; }
-  #repOptional { display: inline-block; color: var(--bad); font-size: 1.3rem; font-weight: 900; text-transform: uppercase; letter-spacing: .02em;
-                 background: linear-gradient(110deg, var(--bad) 30%, #ffaaa5 46%, #fff 50%, #ffaaa5 54%, var(--bad) 70%);
-                 background-size: 250% 100%; -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
-                 filter: drop-shadow(0 0 3px var(--bad)); animation: optionalReflect 2.6s linear infinite; }
-  @keyframes optionalReflect { from { background-position: 100% 0; } to { background-position: 0 0; } }
-  @media (prefers-reduced-motion: reduce) { #repOptional { animation: none; background: none; -webkit-text-fill-color: currentColor; filter: none; } }
+  #repOptional { color: var(--bad); font-size: 1.3rem; font-weight: 900; text-transform: uppercase; letter-spacing: .02em; }
   .card h2:not(:first-child) { font-size: .9rem; margin-top: 20px; }
   .banner { border-width: var(--bw); border-radius: var(--r); box-shadow: none; font-size: 1rem; margin-bottom: var(--gap); }
   .banner.login { font-size: 1.15rem; }
