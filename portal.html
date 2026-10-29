@@ -717,7 +717,7 @@
         <label class="choice" id="othersBox" style="margin-top:8px;display:none"><input type="checkbox" id="othersOk">
           Also approve claims filed by hand / on another computer
           <small>Only after the checks against the claim file: account, Int Sub Amt, max claim, dates, not rollover</small></label>
-        <label for="limitN">At most <input type="number" id="limitN" class="limit" min="1" step="1" placeholder="all">
+        <label id="limitRow" for="limitN">At most <input type="number" id="limitN" class="limit" min="1" step="1" placeholder="all">
           this run <small class="muted">· empty = all · 2 = test</small></label>
       </div>
 
@@ -939,6 +939,7 @@ function refreshForm(locked) {
   $("qEntry").classList.toggle("show", kind() === "entry");
   if (kind() !== lastKind) $("onlyReverify").checked = false;   // never carried over
   $("qApprove").classList.toggle("show", !!CONFIRM[kind()]);
+  $("limitRow").style.display = kind() === "entry_fresh" ? "none" : "";
   $("othersBox").style.display = "none";          // every Submitted IS claim is approved now (no option)
   if (kind() !== lastKind) $("othersOk").checked = false;      // never carried over to another job
   if (kind() !== lastKind && CONFIRM[kind()]) {     // a confirmation is never carried over to another job
@@ -965,7 +966,7 @@ async function post(url, body) {
 }
 $("startBtn").onclick = async () => {
   $("startErr").textContent = "";
-  const lim = CONFIRM[kind()] ? parseInt($("limitN").value || "0", 10) || 0 : 0;
+  const lim = CONFIRM[kind()] && kind() !== "entry_fresh" ? parseInt($("limitN").value || "0", 10) || 0 : 0;
   const res = await post("/api/start", {kind: kind(), csv: directApproval() ? "" : $("csv").value, approval_sol: directApproval() ? $("approvalSol").value.trim() : "", answer: answer(), limit: lim,
                                         only_reverify: kind() === "entry" && $("onlyReverify").checked,
                                         others: ["claim_approve", "isclaim_approve"].includes(kind()) && $("othersOk").checked});

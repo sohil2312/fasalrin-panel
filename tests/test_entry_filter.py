@@ -135,10 +135,11 @@ class EntryFilterTests(unittest.TestCase):
                 spawn.return_value=Mock(pid=123,poll=Mock(return_value=None))
                 name='branches/3106/3106.csv'
                 self.assertEqual(portal.start_job('entry_fresh',name,''),'tick the confirmation')
-                self.assertIsNone(portal.start_job('entry_fresh',name,'yes'))
+                self.assertIsNone(portal.start_job('entry_fresh',name,'yes', limit=2))
                 self.assertIn('fasalrin_fresh.py',spawn.call_args.args[0])
                 self.assertIn('--regular-worklist',spawn.call_args.args[0])
                 self.assertIn(name,spawn.call_args.args[0])
+                self.assertNotIn('--limit',spawn.call_args.args[0])
                 portal.job['logfh'].close(); portal.job.clear(); spawn.reset_mock()
                 with path.open('w',newline='') as fh:
                     w=csv.DictWriter(fh,fieldnames=list(self.row));w.writeheader();w.writerow(dict(self.row,DP='0'))

@@ -306,7 +306,7 @@ def start_job(kind: str, csv_name: str, answer: str, limit: int = 0, only_reveri
             args += ["--yes"]                     # approval / claim jobs: confirmed in the panel
         elif only_reverify:
             args += ["--only-reverify"]           # only the Aadhaar-reverify rows, once more
-        if kind != "entry" and limit > 0:
+        if kind not in ("entry", "entry_fresh") and limit > 0:
             args += ["--limit", str(limit)]
         if (others or direct_approval) and kind in ("claim_approve", "isclaim_approve"):
             args += ["--others"]                  # also claims filed by hand / on another computer (checked)
