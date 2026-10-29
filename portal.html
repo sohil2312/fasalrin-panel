@@ -932,8 +932,8 @@ function refreshForm(locked) {
   lastKind = kind();
   const direct = directApproval();
   $("approvalBranch").style.display = direct ? "" : "none";
-  $("masterCard").style.display = $("buildCard").style.display = direct || scheme() === "fresh" ? "none" : "";
-  $("repCard").style.display = direct ? "none" : "";
+  $("masterCard").style.display = $("buildCard").style.display = scheme() === "fresh" ? "none" : "";
+  $("repCard").style.display = "";
   $("startBtn").disabled = locked || (direct ? !/^[0-9]{4}$/.test($("approvalSol").value.trim()) : !$("csv").value) || !kind() || !answer();
   showEntryFilter();
   if (isEntry() && (!matchingPreview() || entryPreview.error || !entryPreview.ready)) $("startBtn").disabled = true;
