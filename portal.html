@@ -428,10 +428,12 @@
   .grid > #buildCard { grid-column: span 7; }
   .grid > #repCard { grid-column: span 5; align-self: start; }
   .grid > #startCard { grid-column: span 7; background: var(--tint-start); }
-  .grid > #jobCard { grid-column: span 12; background: var(--tint-job); }
-  .grid > section:nth-child(6) { grid-column: span 12; }     /* latest rows */
+  .grid > #jobCard { grid-column: span 3; background: var(--tint-job); }
+  .grid > section:nth-child(6) { grid-column: span 9; }      /* latest rows */
   .grid > section:nth-child(7) { grid-column: span 12; }     /* CSV totals: numbers | hand work, side by side */
   .grid > section:nth-child(6) .scroll { max-height: 300px; }
+  .grid > section:nth-child(6) table { min-width: 760px; }
+  .grid > section:nth-child(6) th:last-child, .grid > section:nth-child(6) td:last-child { min-width: 250px; }
   .totcols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 28px; align-items: start; }
   .totcol > h2 { margin: 18px 0 10px; font-size: .9rem; font-weight: 700; text-transform: none; letter-spacing: 0; }
   .totcol > h2:first-child { margin-top: 0; }
@@ -446,7 +448,7 @@
   @media (max-width: 1040px) {
     .grid > section, .grid > #masterCard, .grid > #buildCard, .grid > #startCard, .grid > #jobCard,
     .grid > section:nth-child(6), .grid > section:nth-child(7) { grid-column: span 6; }
-    .grid > #repCard, .grid > section:nth-child(6), .grid > section:nth-child(7) { grid-column: span 12; }
+    .grid > #repCard, .grid > #jobCard, .grid > section:nth-child(6), .grid > section:nth-child(7) { grid-column: span 12; }
   }
   @media (max-width: 760px) {
     .grid > section, .grid > #masterCard, .grid > #buildCard, .grid > #startCard, .grid > #jobCard { grid-column: span 12; }
