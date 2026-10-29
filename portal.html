@@ -1423,9 +1423,10 @@ async function loadReports(force = false) {
   if (!force && c === repFor) return;
   repFor = c; repPick = null;
   $("repMatchMsg").textContent = ""; $("repMsg").textContent = "";
+  $("repHelp").style.display = isBranch ? "" : "none";
   if (!isBranch) {
     $("anaBox").style.display = "none";
-    $("repHelp").innerHTML = hints([["i-arrow", "Pick a branch first"]]);
+    $("repHelp").textContent = "";
     $("repInfo").textContent = "";
     $("repUpBtn").disabled = $("repMatchBtn").disabled = true;
     return;
