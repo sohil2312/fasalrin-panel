@@ -523,7 +523,9 @@ def status() -> dict:
 # http
 # ----------------------------------------------------------------------------
 SAMPLES = {"fresh.csv": "is_fresh_sample.csv",              # /sample/<key> -> samples/<file> (fixed list only)
-           "regular.xlsx": "is_regular_master_sample.xlsx"}
+           "regular.xlsx": "is_regular_master_sample.xlsx",
+           "isclaim.xlsx": "is_regular_claim_sample.xlsx", "additional.xlsx": "is_additional_claim_sample.xlsx",
+           "pri.xlsx": "pri_additional_claim_sample.xlsx", "prireg.xlsx": "pri_regular_claim_sample.xlsx"}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -542,8 +544,11 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path in ("/", "/index.html"):
             self._send(200, (ROOT / "portal.html").read_bytes(), "text/html; charset=utf-8")
-        elif self.path.startswith("/sample/"):          # headings + dummy rows to fill in (served by the panel itself)
-            sample = SAMPLES.get(self.path.partition("?")[0][len("/sample/"):])
+        elif self.path.startswith(("/sample/", "/samples/")):
+            path = self.path.partition("?")[0]
+            sample = path[len("/samples/"):] if path.startswith("/samples/") else SAMPLES.get(path[len("/sample/"):])
+            if sample not in SAMPLES.values():
+                return self._send(404, {"error": "sample not found"})
             if not sample or not (ROOT / "samples" / sample).exists():
                 return self._send(404, {"error": "sample file missing: restart the panel to update it"})
             data = (ROOT / "samples" / sample).read_bytes()

@@ -559,6 +559,7 @@
         <input type="file" id="mFile" accept=".xlsx">
         <button id="mUpBtn" disabled>Upload master</button>
         <button id="colsBtn" type="button" aria-expanded="false" aria-controls="colsBox">Columns</button>
+        <a id="sampleLink" href="samples/is_regular_master_sample.xlsx" download>Download sample file</a>
         <span id="mMsg" class="muted"></span>
       </div>
       <div id="colsBox" style="display:none;margin-top:10px">
@@ -596,7 +597,7 @@
         <div class="row inline3" style="margin-top:0">
           <input type="file" id="fFile" accept=".xlsx,.csv" aria-label="Branch file">
           <button class="buildBtn" id="fUpBtn" disabled>Upload branch file</button>
-          <a href="/sample/fresh.csv" download="is_fresh_sample.csv"><svg class="ic" aria-hidden="true"><use href="#i-down"/></svg> Sample file</a>
+          <a href="samples/is_fresh_sample.csv" download="is_fresh_sample.csv"><svg class="ic" aria-hidden="true"><use href="#i-down"/></svg> Sample file</a>
           <span id="fMsg" class="muted"></span>
         </div>
         <div class="hints"><span class="hint" style="--i:0"><svg class="ic"><use href="#i-file"/></svg><span>One branch · .xlsx or .csv</span></span>
@@ -866,7 +867,14 @@ const COLUMNS = {
     ["RELATIVE NAME", "no", "blank → Aadhaar name"], ["MO NO", "no", "blank → 9876543210"], ["ADDRESS", "yes", ""],
     ["VILLAGE", "yes", ""], ["SURVEY NO", "CC004", ""], ["KHATA NO", "CC004", ""], ["LAND", "CC004", "land area"]],
 };
+const SAMPLE_FILES = {
+  regular: "is_regular_master_sample.xlsx", isclaim: "is_regular_claim_sample.xlsx",
+  additional: "is_additional_claim_sample.xlsx", pri: "pri_additional_claim_sample.xlsx",
+  prireg: "pri_regular_claim_sample.xlsx", fresh: "is_fresh_sample.csv",
+};
 function showCols(t) {
+  $("sampleLink").href = "samples/" + SAMPLE_FILES[t];
+  $("sampleLink").download = SAMPLE_FILES[t];
   const cols = COLUMNS[t];
   $("colsBtn").style.display = cols ? "" : "none";
   if (!cols) { $("colsBox").style.display = "none"; $("colsBtn").setAttribute("aria-expanded", "false"); return; }

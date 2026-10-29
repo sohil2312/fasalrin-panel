@@ -239,3 +239,11 @@ Use either the script or the workbook on a given CSV, not both: each keeps its o
 - Unexpected page → `ERROR:*` + screenshot in `screenshots/`, then next row.
 - Session dropped → prints `!! Session logged out`; log in again in the browser, press ENTER, it retries the same row (unless it was mid-submit → `CHECK_PORTAL`).
 - Never type portal URLs into the address bar — a hard load logs you out.
+
+## Bundled sample files
+
+**Download sample file** beside Columns opens the selected workflow's file from `samples/`.
+These files ship with the ZIP and updates; no external download service is used. You can also open
+them directly from the extracted `samples` folder. The new claim templates contain headers only:
+add your branch rows starting at row 2. SOL, branch, and account cells are formatted as text.
+The panel itself still needs its local Python server for uploads and automation.
