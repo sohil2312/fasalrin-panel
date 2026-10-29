@@ -671,24 +671,16 @@
         <label class="choice" data-scheme="regular"><input type="radio" name="kind" value="entry">Enter old application</label>
         <label class="choice" data-scheme="regular"><input type="radio" name="kind" value="entry_fresh">Enter fresh application</label>
         <label class="choice" data-scheme="regular"><input type="radio" name="kind" value="approve">Approve applications</label>
-        <label class="choice" data-scheme="additional"><input type="radio" name="kind" value="additional">File IS additional claims
-          <small><svg class="ic"><use href="#i-user"/></svg>Branch User · rollover</small></label>
-        <label class="choice" data-scheme="additional"><input type="radio" name="kind" value="additional_approve">Approve IS additional claims
-          <small><svg class="ic"><use href="#i-shield"/></svg>Branch Head · our claims</small></label>
-        <label class="choice" data-scheme="pri"><input type="radio" name="kind" value="pri">File PRI additional claims
-          <small><svg class="ic"><use href="#i-user"/></svg>Branch User · FY 24-25</small></label>
-        <label class="choice" data-scheme="pri"><input type="radio" name="kind" value="pri_approve">Approve PRI additional claims
-          <small><svg class="ic"><use href="#i-shield"/></svg>Branch Head · all Submitted</small></label>
+        <label class="choice" data-scheme="additional"><input type="radio" name="kind" value="additional">File IS additional claims</label>
+        <label class="choice" data-scheme="additional"><input type="radio" name="kind" value="additional_approve">Approve IS additional claims</label>
+        <label class="choice" data-scheme="pri"><input type="radio" name="kind" value="pri">File PRI additional claims</label>
+        <label class="choice" data-scheme="pri"><input type="radio" name="kind" value="pri_approve">Approve PRI additional claims</label>
         <label class="choice" data-scheme="fresh"><input type="radio" name="kind" value="fresh">Enter fresh applications
           <small><svg class="ic"><use href="#i-user"/></svg>Branch User · new farmers</small></label>
-        <label class="choice" data-scheme="prireg"><input type="radio" name="kind" value="prireg">File PRI regular claims
-          <small><svg class="ic"><use href="#i-user"/></svg>Branch User · FY 25-26</small></label>
-        <label class="choice" data-scheme="prireg"><input type="radio" name="kind" value="prireg_approve">Approve PRI regular claims
-          <small><svg class="ic"><use href="#i-shield"/></svg>Branch Head · all Submitted</small></label>
-        <label class="choice" data-scheme="isclaim"><input type="radio" name="kind" value="isclaim">File regular IS claims
-          <small><svg class="ic"><use href="#i-user"/></svg>Branch User · pending on portal</small></label>
-        <label class="choice" data-scheme="isclaim"><input type="radio" name="kind" value="isclaim_approve">Approve regular IS claims
-          <small><svg class="ic"><use href="#i-shield"/></svg>Branch Head · all Submitted</small></label>
+        <label class="choice" data-scheme="prireg"><input type="radio" name="kind" value="prireg">File PRI regular claims</label>
+        <label class="choice" data-scheme="prireg"><input type="radio" name="kind" value="prireg_approve">Approve PRI regular claims</label>
+        <label class="choice" data-scheme="isclaim"><input type="radio" name="kind" value="isclaim">File regular IS claims</label>
+        <label class="choice" data-scheme="isclaim"><input type="radio" name="kind" value="isclaim_approve">Approve regular IS claims</label>
       </div>
 
       <div id="entryFilter" role="status" aria-live="polite" style="display:none;margin-top:14px">
@@ -800,8 +792,10 @@ const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&
 const label = s => s.replace(/_/g, " ").toLowerCase();
 
 function kind() { const k = document.querySelector('input[name="kind"]:checked'); return k && k.value; }
+const NO_CONFIRM = new Set(["entry", "approve", "additional", "additional_approve", "pri", "pri_approve",
+                            "prireg", "prireg_approve", "isclaim", "isclaim_approve"]);
 function answer() {
-  if (["entry", "approve"].includes(kind())) return "yes";
+  if (NO_CONFIRM.has(kind())) return "yes";
   if (CONFIRM[kind()]) return $("approveOk").checked ? "yes" : "";
   return "";
 }
@@ -815,26 +809,10 @@ const CONFIRM = {   // [tick-box label, short reminder]
           "IS = lower of max claim / Int Sub Amt · ⚠ Can't be undone"],
   claim_approve: ["Yes, approve every IS claim listed as Submitted for the branch",
                   "Preview checked first · ⚠ Can't be undone"],
-  additional: ["Yes, file IS additional (rollover) claims for this branch",
-               "Rollover = Repay. Date · IS = lower · ⚠ Can't be undone"],
-  additional_approve: ["Yes, approve the IS additional claims our job filed",
-                       "Checked vs work list · ⚠ Can't be undone"],
-  pri: ["Yes, file PRI additional claims for this branch",
-        "Disb → Repay · PRI = lower · ⚠ Can't be undone"],
-  prireg: ["Yes, file PRI regular claims for this branch",
-           "Disb → Repay · PRI = lower · ⚠ Can't be undone"],
   entry_fresh: ["Yes, enter eligible fresh applications for this branch",
           "Preview checked before submission · Cannot be undone"],
   fresh: ["Yes, enter fresh applications for this branch",
           "Aadhaar VERIFY · CC004 Castor / CC043 Dairy cow ×4 · \u26a0 Can't be undone"],
-  prireg_approve: ["Yes, approve every PRI claim listed as Submitted for the branch",
-                   "Preview checked first · ⚠ Can't be undone"],
-  pri_approve: ["Yes, approve every PRI claim listed as Submitted for the branch",
-                "Preview checked first · ⚠ Can't be undone"],
-  isclaim: ["Yes, file IS claims for every account the portal lists as Pending",
-            "Disb → 31-03-2026 · IS = lower of max claim / Int Sub Amt · ⚠ Can't be undone"],
-  isclaim_approve: ["Yes, approve every IS claim listed as Submitted for the branch",
-                    "Preview checked first · ⚠ Can't be undone"],
 };
 const isAddList = c => /^branches\/\d+\/additional\/\d+_additional\.csv$/.test(c || "");
 const isPriList = c => /^branches\/\d+\/pri\/\d+_pri\.csv$/.test(c || "");
@@ -1061,15 +1039,10 @@ function setTab(t, save = true) {
   pendLabel = {regular: "pending in master", additional: "Int Sub Amt > 0", pri: "3% PRI > 0", prireg: "3% PRI > 0", fresh: "new farmers",
                isclaim: "Int Sub Amt > 0"}[t];
   solChoice = "";
-  $("mHelp").style.display = t === "regular" ? "none" : "";
-  $("mHelp").innerHTML = t === "regular" ? "" : hints([
-    ["i-file", {additional: "<b>Int Sub Amt</b> &gt; 0", pri: "<b>3% PRI</b> &gt; 0",
-                prireg: "<b>3% PRI</b> &gt; 0", fresh: "<b>New farmers</b> (not in portal)",
-                isclaim: "<b>Every account</b> · claimed if Pending on portal"}[t]],
-    ["i-check", "Progress kept"],
-    ...(t === "prireg" ? [["i-alert", "Approve loan in Loan Applications first", "warn"]] : []),
-    ...(t === "isclaim" ? [["i-link", "Regular claims · existing claim history preserved"]] : []),
-    ...(t === "fresh" ? [["i-layers", "CC004 crop · CC043 dairy"], ["i-alert", "Crop rows need LAND AREA", "warn"]] : [])]);
+  $("mHelp").style.display = fresh ? "" : "none";
+  $("mHelp").innerHTML = fresh ? hints([
+    ["i-file", "<b>New farmers</b> (not in portal)"], ["i-check", "Progress kept"],
+    ["i-layers", "CC004 crop · CC043 dairy"], ["i-alert", "Crop rows need LAND AREA", "warn"]]) : "";
   masterChoice = null; csvChoice = null; lastScheme = null;
   $("buildMsg").textContent = ""; $("mMsg").textContent = ""; $("exportMsg").textContent = ""; $("fixMsg").textContent = "";
   if (save) { try { localStorage.setItem("fasalrinTab", t); } catch (e) {} }

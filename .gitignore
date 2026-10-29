@@ -40,3 +40,7 @@ logs/
 # extra dashboards (other ports): their stop flags, job markers
 stop_*.flag
 .running/
+
+# Local CodeGraph index and editor integration
+.codegraph/
+.cursor/rules/codegraph.mdc
