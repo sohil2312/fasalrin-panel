@@ -456,6 +456,7 @@
   .card { border-width: var(--bw); border-radius: var(--r); box-shadow: none; padding: 20px 22px; }
   .card > h2:first-child { font-size: 1.05rem; letter-spacing: -.01em; margin-bottom: 14px; }
   .card > h2:first-child::before { width: 12px; height: 12px; border-width: 2px; }
+  #repOptional { color: var(--bad); font-size: 1.3rem; font-weight: 900; text-transform: uppercase; letter-spacing: .02em; }
   .card h2:not(:first-child) { font-size: .9rem; margin-top: 20px; }
   .banner { border-width: var(--bw); border-radius: var(--r); box-shadow: none; font-size: 1rem; margin-bottom: var(--gap); }
   .banner.login { font-size: 1.15rem; }
@@ -584,7 +585,7 @@
 
     <!-- step 3: pick the branch work list, upload its approved report, match -->
     <section class="card span2" id="repCard">
-      <h2><span id="repTitle">3 · Match approved report (optional)</span></h2>
+      <h2><span id="repTitle">3 · Match approved report</span> <strong id="repOptional">Optional</strong></h2>
       <div id="freshUp" style="display:none">
         <div class="row inline3" style="margin-top:0">
           <input type="file" id="fFile" accept=".xlsx,.csv" aria-label="Branch file">
@@ -1058,7 +1059,8 @@ function setTab(t, save = true) {
   $("masterCard").style.display = $("buildCard").style.display = fresh ? "none" : "";
   $("freshUp").style.display = fresh ? "" : "none";
   showCols(t);
-  $("repTitle").textContent = fresh ? "1 · Upload branch file & match report" : "3 · Match approved report (optional)";
+  $("repTitle").textContent = fresh ? "1 · Upload branch file & match report" : "3 · Match approved report";
+  $("repOptional").style.display = fresh ? "none" : "";
   $("startTitle").textContent = `${fresh ? 2 : 4} · Start — ${SCHEME_NAME[t]}`;
   pendLabel = {regular: "pending in master", additional: "Int Sub Amt > 0", pri: "3% PRI > 0", prireg: "3% PRI > 0", fresh: "new farmers",
                isclaim: "Int Sub Amt > 0"}[t];
