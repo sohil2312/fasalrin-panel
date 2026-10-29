@@ -351,10 +351,6 @@
   code { border: 1.5px solid var(--edge); border-radius: 6px; background: var(--sunk); }
   .err { color: var(--bad); }
 
-  .optnote { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; align-items: center;
-             background: var(--y); color: var(--on-pop); border: var(--bw) solid var(--edge); border-radius: var(--r-sm);
-             padding: 6px 12px; font-size: .8rem; margin-top: 14px; }
-  .optnote a { color: var(--on-pop); }
   .inline3 select { flex: 1 1 280px; min-width: 0; width: auto; }
   .inline3 input[type=file] { flex: 0 1 260px; min-width: 0; }
   .solrow select { flex: 1 1 260px; min-width: 0; max-width: 520px; width: auto; }
@@ -390,7 +386,6 @@
   .hints > .ic { color: var(--muted); animation: hintIn .32s var(--ease-out) both; animation-delay: calc(var(--i, 0) * 45ms); }
   @keyframes hintIn { from { opacity: 0; transform: translateY(4px) scale(.97); } to { opacity: 1; transform: none; } }
   .choice small .ic { width: 13px; height: 13px; vertical-align: -2px; margin-right: 3px; }
-  .optnote .ic { vertical-align: -3px; }
   @media (prefers-reduced-motion: reduce) { .hint, .hints > .ic { animation: fadeOnly .2s ease both; } }
   @keyframes fadeOnly { from { opacity: 0; } to { opacity: 1; } }
 
@@ -431,9 +426,9 @@
   .grid > section { grid-column: span 6; display: flex; flex-direction: column; }
   .grid > #masterCard { grid-column: span 5; }
   .grid > #buildCard { grid-column: span 7; }
-  .grid > #repCard { grid-column: span 12; }
-  .grid > #startCard { grid-column: span 5; background: var(--tint-start); }
-  .grid > #jobCard { grid-column: span 7; background: var(--tint-job); }
+  .grid > #repCard { grid-column: span 5; align-self: start; }
+  .grid > #startCard { grid-column: span 7; background: var(--tint-start); }
+  .grid > #jobCard { grid-column: span 12; background: var(--tint-job); }
   .grid > section:nth-child(6) { grid-column: span 12; }     /* latest rows */
   .grid > section:nth-child(7) { grid-column: span 12; }     /* CSV totals: numbers | hand work, side by side */
   .grid > section:nth-child(6) .scroll { max-height: 300px; }
@@ -572,9 +567,6 @@
         <table style="margin-top:6px"><thead><tr><th>Column</th><th>Needed</th><th>Example / notes</th></tr></thead>
           <tbody id="colsBody"></tbody></table>
       </div>
-      <div class="hints"><span class="hint" style="--i:0"><svg class="ic"><use href="#i-up"/></svg><span>Upload once</span></span>
-        <span class="hint" style="--i:1"><svg class="ic"><use href="#i-layers"/></svg><span>All branches</span></span>
-        <span class="hint" style="--i:2"><svg class="ic"><use href="#i-check"/></svg><span>Newest on top</span></span></div>
     </section>
 
     <!-- step 2: one branch at a time: pick it, see its counts, build its work list -->
@@ -592,7 +584,7 @@
 
     <!-- step 3: pick the branch work list, upload its approved report, match -->
     <section class="card span2" id="repCard">
-      <h2><span id="repTitle">3 · Select branch &amp; match approved report</span></h2>
+      <h2><span id="repTitle">3 · Match approved report (optional)</span></h2>
       <div id="freshUp" style="display:none">
         <div class="row inline3" style="margin-top:0">
           <input type="file" id="fFile" accept=".xlsx,.csv" aria-label="Branch file">
@@ -645,8 +637,7 @@
         <button id="upBtn" disabled>Upload CSV</button>
         <span id="upMsg" class="muted"></span>
       </div>
-      <div class="optnote"><span><svg class="ic"><use href="#i-info"/></svg> <b>Optional</b> · no report = progress file</span>
-        <a href="#" id="upToggle">Upload a work list CSV instead</a></div>
+      <div class="row" style="margin-top:8px"><a href="#" id="upToggle">Upload a work list CSV instead</a></div>
     </section>
 
     <!-- start a job -->
@@ -1067,7 +1058,7 @@ function setTab(t, save = true) {
   $("masterCard").style.display = $("buildCard").style.display = fresh ? "none" : "";
   $("freshUp").style.display = fresh ? "" : "none";
   showCols(t);
-  $("repTitle").textContent = fresh ? "1 · Upload branch file & match report" : "3 · Select branch & match approved report";
+  $("repTitle").textContent = fresh ? "1 · Upload branch file & match report" : "3 · Match approved report (optional)";
   $("startTitle").textContent = `${fresh ? 2 : 4} · Start — ${SCHEME_NAME[t]}`;
   pendLabel = {regular: "pending in master", additional: "Int Sub Amt > 0", pri: "3% PRI > 0", prireg: "3% PRI > 0", fresh: "new farmers",
                isclaim: "Int Sub Amt > 0"}[t];
