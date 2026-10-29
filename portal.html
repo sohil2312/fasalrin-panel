@@ -693,12 +693,11 @@
       <div id="approvalBranch" style="display:none">
         <label for="approvalSol">Branch SOL code</label>
         <input id="approvalSol" inputmode="numeric" maxlength="4" pattern="[0-9]{4}" placeholder="e.g. 3106">
-        <p class="muted">No master upload or branch list build needed. Log in as this branch’s Branch Head. Approval records stay with this SOL.</p>
       </div>
       <div class="q" id="qApprove">
         <label class="choice" style="margin-top:12px"><input type="checkbox" id="approveOk">
-          <span id="okText">Yes, approve every application listed as Submitted for the branch</span>
-          <small id="okSmall">⚠ Can't be undone</small></label>
+          <span id="okText"></span>
+          <small id="okSmall"></small></label>
         <label class="choice" id="othersBox" style="margin-top:8px;display:none"><input type="checkbox" id="othersOk">
           Also approve claims filed by hand / on another computer
           <small>Only after the checks against the claim file: account, Int Sub Amt, max claim, dates, not rollover</small></label>
@@ -795,7 +794,7 @@ const label = s => s.replace(/_/g, " ").toLowerCase();
 
 function kind() { const k = document.querySelector('input[name="kind"]:checked'); return k && k.value; }
 function answer() {
-  if (kind() === "entry") return "yes";                // entry has nothing to confirm (it checks the preview itself)
+  if (["entry", "approve"].includes(kind())) return "yes";
   if (CONFIRM[kind()]) return $("approveOk").checked ? "yes" : "";
   return "";
 }
@@ -805,7 +804,6 @@ function hints(items) {
     : `<span class="hint ${x[2] || ""}" style="--i:${i}"><svg class="ic" aria-hidden="true"><use href="#${x[0]}"/></svg><span>${x[1]}</span></span>`).join("");
 }
 const CONFIRM = {   // [tick-box label, short reminder]
-  approve: ["Yes, approve every application listed as Submitted for the branch", "⚠ Can't be undone"],
   claim: ["Yes, file IS claims for the branch's approved applications",
           "IS = lower of max claim / Int Sub Amt · ⚠ Can't be undone"],
   claim_approve: ["Yes, approve every IS claim listed as Submitted for the branch",
