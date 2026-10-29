@@ -593,13 +593,14 @@ def process_row(page, d: dict, stage: dict, mark_submitting):
             page.locator('.modal-content:visible button', has_text=BTN("(?:BACK TO DASHBOARD|CLOSE)")).first.click()
             to_dashboard(page)
             return "EXISTS_ON_PORTAL", "", "Beneficiary details exist but the popup has no OK: check by hand"
-        if acct in offered:                       # pick this account when the portal lists it
-            sel.first.select_option(acct)
-            sel.first.dispatch_event("change")
-            page.wait_for_timeout(200)
+        if acct not in offered:
+            to_dashboard(page)
+            return f"{HOLD}:ACCOUNT", "", "Beneficiary exists, but account not offered in the portal list; check by hand"
+        sel.first.select_option(acct)
+        sel.first.dispatch_event("change")
+        page.wait_for_timeout(200)
         # "Beneficiary details exist in the system" -> OK, then the application is entered the fresh way
-        print(f"\n    Beneficiary details exist -> OK (account {acct} "
-              f"{'in' if acct in offered else 'not in'} its list)", flush=True)
+        print(f"\n    Beneficiary details exist -> OK (account {acct} in its list)", flush=True)
         ok_btn.first.click()
         page.wait_for_timeout(500)
         more = page.locator('.modal-content:visible button', has_text=BTN("(?:OK|YES|CONFIRM|PROCEED)"))

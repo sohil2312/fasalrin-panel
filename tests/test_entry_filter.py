@@ -104,6 +104,22 @@ class EntryFilterTests(unittest.TestCase):
             self.assertEqual(saved[0]['Status'],'COMPLETED')
             self.assertEqual(saved[0]['RELATIVE NAME'],'Relative')
 
+    def test_fresh_holds_known_farmer_when_account_not_offered(self):
+        from unittest.mock import MagicMock
+        import fasalrin_fresh as fresh
+        page = MagicMock()
+        page.locator.return_value.count.return_value = 1
+        page.locator.return_value.first.evaluate.return_value = ['another-account']
+        with patch.object(fresh.f, 'open_fetch_popup'), \
+             patch.object(fresh.f, 'fetch_record', return_value='exists'), \
+             patch.object(fresh, 'to_dashboard') as dashboard:
+            status, app, detail = fresh.process_row(page, self.row, {}, lambda: None)
+        self.assertEqual(status, 'CHECK_PORTAL:ACCOUNT')
+        self.assertEqual(app, '')
+        self.assertIn('not offered', detail)
+        dashboard.assert_called_once_with(page)
+        page.locator.return_value.first.click.assert_not_called()
+
     def test_backend_routes_fresh_and_blocks_empty_queue(self):
         import csv, tempfile
         from pathlib import Path
