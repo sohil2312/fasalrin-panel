@@ -921,7 +921,7 @@ def precheck(d: dict) -> tuple[str, str] | None:
     return None
 
 
-def run(csv_path: Path):
+def run(csv_path: Path, regular_worklist=False):
     with open(csv_path, newline="", encoding="utf-8-sig") as fh:
         rd = csv.DictReader(fh)
         header, rows = rd.fieldnames, list(rd)
@@ -933,7 +933,7 @@ def run(csv_path: Path):
         r["_area"] = re.sub(r"[^\d.]", "", r.get(area_col, "")) if area_col else ""
     for acct, rec in progress_records(csv_path).items():         # the progress file wins over the CSV
         for r in rows:
-            if r["Account No."] == acct:
+            if r["Account No."] == acct and r.get("Status", "").strip().upper() != "RETRY":
                 r.update(rec)
     out_header = header
     for r in rows:                      # a draft reset to retry: continued on the portal, not started again
@@ -942,11 +942,27 @@ def run(csv_path: Path):
         if r.get("Status") in ("NO_LAND", "BAD_DATA", "SCHEME_UNKNOWN") and not precheck(r):
             r["Status"], r["Detail"] = "", "data fixed in the Excel"
 
+    if regular_worklist:
+        f.PROGRESS_CSV = str(progress_path(csv_path))
+
     def finish(r):
-        log_progress(csv_path, r["Account No."], r["Status"], r["Loan App No"], r["Detail"])
+        if regular_worklist:
+            f.log_progress(r["Account No."], r["Status"], r.get(f.COL_DL, ""), r["Loan App No"], r["Detail"])
+        else:
+            log_progress(csv_path, r["Account No."], r["Status"], r["Loan App No"], r["Detail"])
         save_csv(csv_path, out_header, [{k: x.get(k, "") for k in out_header} for x in rows])
 
-    todo = [r for r in rows if r.get("Account No.") and not is_done(r.get("Status", ""))]
+    if regular_worklist:
+        import entry_filter
+        selected, summary = entry_filter.select_rows(rows, "fresh")
+        todo = [rows[i] for i in selected]
+        print(f"[filter] {summary['total']} rows: {summary['ready']} ready, {summary['filtered']} filtered, "
+              f"{summary['skipped']} finished/held", flush=True)
+    else:
+        todo = [r for r in rows if r.get("Account No.") and not is_done(r.get("Status", ""))]
+    if not todo:
+        print("[done] No eligible fresh applications. Review the filtering summary; nothing submitted.", flush=True)
+        return
     b = collections.Counter(("done" if r["Status"] in ("COMPLETED", "ALREADY_ON_PORTAL") else
                              "hand" if r["Status"] in HAND else "check" if r["Status"].startswith(HOLD) else "todo")
                             for r in rows)
@@ -1042,6 +1058,7 @@ def cli():
     ap.add_argument("source", help="the bank's 'not in system' .xlsx (builds the work list) or a fresh work-list CSV")
     ap.add_argument("--limit", type=int, default=0, help="stop after N rows entered (0 = all)")
     ap.add_argument("--yes", action="store_true", help="no questions (panel)")
+    ap.add_argument("--regular-worklist", action="store_true", help="use the shared Loan Applications list and progress records")
     a = ap.parse_args()
     LIMIT = a.limit
     if a.source.lower().endswith(".xlsx"):
@@ -1050,7 +1067,7 @@ def cli():
         for p in paths:
             print(f"   .venv\\Scripts\\python fasalrin_fresh.py {p}")
         return
-    run(Path(a.source))
+    run(Path(a.source), regular_worklist=a.regular_worklist)
 
 
 if __name__ == "__main__":

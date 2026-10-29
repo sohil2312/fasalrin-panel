@@ -251,3 +251,27 @@ The panel itself still needs its local Python server for uploads and automation.
 The Loan Applications master does not require a `Status` column. Missing or blank values default
 to `Pending`. Explicit `Pending` / `Draft` rows are included; other statuses remain excluded.
 Existing application progress is still preserved when rebuilding a branch list.
+
+## Old and fresh entry from one branch list
+
+Under **Loan Applications**, choose **Enter old application** or **Enter fresh application**.
+Both use the same uploaded master, selected branch CSV and progress history. Build the branch
+list once; changing modes does not delete or copy its rows.
+
+- Old: positive DP and valid Aadhaar; existing account/branch and disbursement-date checks remain.
+- Fresh: the above plus DOB, relative name, village, survey number, khata number and positive
+  land area. These fields are required for this mode for both crop and dairy rows. The existing
+  fresh workflow also needs applicant name, gender, address and supported scheme; its date/age
+  checks remain. The bundled master template includes the extra applicant columns.
+
+The summary below the job choices shows total rows in the branch list, ready rows, unique filtered
+rows, finished/held/outside-selection rows, and counts for each data problem. A row can have
+multiple problems. Start stays disabled until the summary has eligible rows; the backend and
+runner recheck the data before opening Chromium. Filtered source rows remain saved for correction.
+Old's optional Aadhaar-only retry selection also updates the summary.
+
+Fresh uses `fasalrin_fresh.py --regular-worklist` with the same CSV; it does not run inside Old.
+A row marked NOT_IN_SYSTEM by Old can be attempted in Fresh after all required data is supplied.
+COMPLETED, ALREADY_ON_PORTAL, DRY_OK and CHECK_PORTAL records are never automatically submitted
+again by either mode. Fresh writes the regular progress schema when using the shared list.
+The older standalone fresh-list command and its progress format still work.

@@ -85,6 +85,7 @@ def busy_elsewhere(csv_name: str, kind: str = "") -> str:
     return ""
 JOBS = {
     "entry":   {"script": "fasalrin_regular.py", "log": "run.log",    "login": "Branch User"},
+    "entry_fresh": {"script": "fasalrin_fresh.py", "log": "fresh.log", "login": "Branch User"},
     "approve": {"script": "fasalrin_verify.py",  "log": "verify.log", "login": "Branch Head"},
     "claim":   {"script": "fasalrin_claim.py",   "log": "claim.log",  "login": "Branch User"},
     "claim_approve": {"script": "fasalrin_claim_verify.py", "log": "claim_verify.log", "login": "Branch Head"},
@@ -285,9 +286,19 @@ def start_job(kind: str, csv_name: str, answer: str, limit: int = 0, only_reveri
     with lock:
         if running():
             return "a job is already running"
+        if kind in ("entry", "entry_fresh"):
+            import entry_filter
+            try:
+                summary = entry_filter.preview(ROOT / csv_name, "old" if kind == "entry" else "fresh", only_reverify)
+            except (OSError, ValueError) as exc:
+                return f"cannot check the work list: {exc}"
+            if not summary["ready"]:
+                return "No eligible entries. Review the filtering summary and correct the missing data."
         STOP_FLAG.unlink(missing_ok=True)
         spec = dict(JOBS[kind], log=log_name(JOBS[kind]["log"]))
         args = [sys.executable, "-u", "-W", "ignore", spec["script"], csv_name]
+        if kind == "entry_fresh":
+            args += ["--regular-worklist"]
         if direct_approval:
             (ROOT / csv_name).parent.mkdir(parents=True, exist_ok=True)
             args += ["--branch-code", approval_sol]
@@ -621,6 +632,15 @@ class Handler(BaseHTTPRequestHandler):
             st = status()
             if q.get("csv") in st["csvs"] and not (st["job"] and st["job"]["state"] in ("running", "login", "stopping")):
                 st["csv"], st["summary"] = q["csv"], csv_summary(q["csv"])
+            if q.get("entry_kind") in ("entry", "entry_fresh") and q.get("csv") in st["csvs"]:
+                import entry_filter
+                name, kind = q["csv"], q["entry_kind"]
+                if branches.scheme_of(ROOT / name) == "regular":
+                    try:
+                        st["entry_preview"] = {"csv": name, "kind": kind, "only_reverify": q.get("only_reverify") == "1",
+                            **entry_filter.preview(ROOT / name, "old" if kind == "entry" else "fresh", q.get("only_reverify") == "1")}
+                    except (OSError, ValueError) as exc:
+                        st["entry_preview"] = {"csv": name, "kind": kind, "error": str(exc)}
             self._send(200, st)
         else:
             self._send(404, {"error": "not found"})

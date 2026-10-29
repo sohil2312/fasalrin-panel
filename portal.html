@@ -667,8 +667,10 @@
 
       <label>Job</label>
       <div class="choices">
-        <label class="choice" data-scheme="regular"><input type="radio" name="kind" value="entry">Enter applications
+        <label class="choice" data-scheme="regular"><input type="radio" name="kind" value="entry">Enter old application
           <small><svg class="ic"><use href="#i-user"/></svg>Branch User</small></label>
+        <label class="choice" data-scheme="regular"><input type="radio" name="kind" value="entry_fresh">Enter fresh application
+          <small><svg class="ic"><use href="#i-user"/></svg>Branch User · complete applicant and land details</small></label>
         <label class="choice" data-scheme="regular"><input type="radio" name="kind" value="approve">Approve applications
           <small><svg class="ic"><use href="#i-shield"/></svg>Branch Head</small></label>
         <label class="choice" data-scheme="additional"><input type="radio" name="kind" value="additional">File IS additional claims
@@ -691,6 +693,12 @@
           <small><svg class="ic"><use href="#i-shield"/></svg>Branch Head · all Submitted</small></label>
       </div>
 
+      <div id="entryFilter" role="status" aria-live="polite" style="display:none;margin-top:14px">
+        <h2>Entry filtering summary</h2>
+        <div id="entryFilterCounts" class="stats"></div>
+        <div id="entryFilterReasons"></div>
+        <p id="entryFilterNote" class="muted"></p>
+      </div>
       <div class="q" id="qEntry">
         <p class="muted">Aadhaar re-verification failures are automatically retried once.</p>
         <label class="choice" style="margin-top:8px"><input type="checkbox" id="onlyReverify">
@@ -825,6 +833,8 @@ const CONFIRM = {   // [tick-box label, short reminder]
         "Disb → Repay · PRI = lower · ⚠ Can't be undone"],
   prireg: ["Yes, file PRI regular claims for this branch",
            "Disb → Repay · PRI = lower · ⚠ Can't be undone"],
+  entry_fresh: ["Yes, enter eligible fresh applications for this branch",
+          "Preview checked before submission · Cannot be undone"],
   fresh: ["Yes, enter fresh applications for this branch",
           "Aadhaar VERIFY · CC004 Castor / CC043 Dairy cow ×4 · \u26a0 Can't be undone"],
   prireg_approve: ["Yes, approve every PRI claim listed as Submitted for the branch",
@@ -850,9 +860,12 @@ const COLUMNS = {
     ["Scheme Code", "yes", "CC004 crop loan · CC043 KCC AH"], ["Disb. Date", "yes", "18-03-2026 (dd-mm-yyyy)"],
     ["Repay. Date", "no", "31-03-2026"], ["DP", "yes", "122000 (more than 0)"], ["Int Sub Amt", "no", "64"],
     ["Aadhaar No.", "yes", "12 digits (Text)"], ["Status", "no", "Missing / blank = Pending; Pending / Draft rows are worked"], ["PORTAL", "no", ""],
-    ["ADDRESS", "empty activity", "AT KARODIYA PO SARASADI , TA KADANA , … — village found from it"],
-    ["SURVEY NO", "CC004, empty activity", "338"], ["KHATA NO", "CC004, empty activity", "147"],
-    ["LAND", "CC004, empty activity", "0.25 (land area)"]],
+    ["DOB", "Fresh only", "dd-mm-yyyy"], ["NAME AS PER ADHAR", "Fresh only", "Name as on Aadhaar"],
+    ["GENDER", "Fresh only", "M / F"], ["RELATIVE NAME", "Fresh only", "Required for fresh entry"],
+    ["VILLAGE", "Fresh only", "Portal village name"],
+    ["ADDRESS", "Fresh / empty activity", "AT KARODIYA PO SARASADI , TA KADANA , … — village found from it"],
+    ["SURVEY NO", "Fresh / empty activity", "338"], ["KHATA NO", "Fresh / empty activity", "147"],
+    ["LAND", "Fresh / empty activity", "0.25 (land area)"]],
   isclaim: [
     ["Sol ID", "yes", "3106 — one file can hold all branches"], ["Branch Name", "yes", "Kadanagam"],
     ["Account No.", "yes", "31060500000001 (Text)"], ["Cust id", "no", ""], ["Scheme Code", "no", "CC004 / CC043"],
@@ -885,7 +898,31 @@ function showCols(t) {
 const SCHEME_NAME = {regular: "Loan Applications", additional: "IS Additional Claims", pri: "PRI additional", prireg: "PRI regular",
                      fresh: "IS fresh", isclaim: "IS Regular Claims"};
 function scheme() { const s = document.querySelector('input[name="scheme"]:checked'); return s ? s.value : "regular"; }
-let lastKind = null, lastScheme = null;
+let lastKind = null, lastScheme = null, entryPreview = null;
+const isEntry = () => ["entry", "entry_fresh"].includes(kind());
+function matchingPreview() {
+  return entryPreview && entryPreview.csv === $("csv").value && entryPreview.kind === kind()
+    && !!entryPreview.only_reverify === (kind() === "entry" && $("onlyReverify").checked);
+}
+function showEntryFilter() {
+  $("entryFilter").style.display = isEntry() ? "" : "none";
+  if (!isEntry()) return;
+  $("entryFilterCounts").innerHTML = "";
+  $("entryFilterReasons").innerHTML = "";
+  if (!$("csv").value || !matchingPreview()) {
+    $("entryFilterNote").textContent = $("csv").value ? "Checking entries…" : "Select a branch work list to see eligible and filtered entries.";
+    return;
+  }
+  if (entryPreview.error) { $("entryFilterNote").textContent = entryPreview.error; return; }
+  stats($("entryFilterCounts"), [["Total rows", entryPreview.total], ["Ready", entryPreview.ready],
+    ["Filtered out", entryPreview.filtered], ["Finished / held / outside selection", entryPreview.skipped]]);
+  const reasons = Object.entries(entryPreview.reasons);
+  $("entryFilterReasons").innerHTML = reasons.length
+    ? '<table><thead><tr><th>Filter reason</th><th>Rows</th></tr></thead><tbody>'
+      + reasons.map(([reason, count]) => `<tr><td>${esc(reason)}</td><td>${count}</td></tr>`).join("") + '</tbody></table>' : "";
+  $("entryFilterNote").textContent = (entryPreview.ready ? "Only ready rows will run. " : "No eligible rows to start. ")
+    + "Rows stay saved. One row may have multiple reasons; reason counts can exceed the filtered total.";
+}
 const directApproval = () => ["approve", "isclaim_approve"].includes(kind());
 function refreshForm(locked) {
   // the scheme decides which jobs and which work lists can be picked
@@ -913,12 +950,14 @@ function refreshForm(locked) {
   $("masterCard").style.display = $("buildCard").style.display = direct || scheme() === "fresh" ? "none" : "";
   $("repCard").style.display = direct ? "none" : "";
   $("startBtn").disabled = locked || (direct ? !/^[0-9]{4}$/.test($("approvalSol").value.trim()) : !$("csv").value) || !kind() || !answer();
+  showEntryFilter();
+  if (isEntry() && (!matchingPreview() || entryPreview.error || !entryPreview.ready)) $("startBtn").disabled = true;
   document.querySelectorAll("#startCard input, #startCard select").forEach(e => e.disabled = locked);
   $("upBtn").disabled = locked || !$("upFile").files.length;
 }
 $("approvalSol").addEventListener("input", () => refreshForm(busy));
-document.querySelectorAll("#startCard input").forEach(e => e.addEventListener("change", () => refreshForm(busy)));
-$("csv").addEventListener("change", () => { csvChoice = $("csv").value; poll(); });
+document.querySelectorAll("#startCard input").forEach(e => e.addEventListener("change", () => { refreshForm(busy); poll(); }));
+$("csv").addEventListener("change", () => { csvChoice = $("csv").value; entryPreview = null; refreshForm(busy); poll(); });
 
 async function post(url, body) {
   const r = await fetch(url, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
@@ -1187,6 +1226,7 @@ const STATE_TEXT = {running: "running", login: "waiting for login", stopping: "s
                     done: "finished", failed: "stopped with an error", stopped: "force-stopped"};
 
 function render(s) {
+  entryPreview = s.entry_preview || null;
   // csv list
   const sel = $("csv");
   busy = !!s.job && ["running", "login", "stopping"].includes(s.job.state);
@@ -1226,7 +1266,7 @@ function render(s) {
   $("jobIdle").style.display = j ? "none" : "";
   $("jobLive").style.display = j ? "" : "none";
   if (j) {
-    $("jobTitle").textContent = ({entry: "Entering applications", approve: "Approving applications",
+    $("jobTitle").textContent = ({entry: "Entering old applications", entry_fresh: "Entering fresh applications", approve: "Approving applications",
       claim: "Filing IS claims", claim_approve: "Approving IS claims", additional: "Filing IS additional claims",
       additional_approve: "Approving IS additional claims", pri: "Filing PRI additional claims",
       pri_approve: "Approving PRI additional claims", prireg: "Filing PRI regular claims",
@@ -1457,7 +1497,13 @@ $("repMatchBtn").onclick = async () => {
 
 async function poll() {
   try {
-    const q = csvChoice ? "?csv=" + encodeURIComponent(csvChoice) : "";
+    const params = new URLSearchParams();
+    if (csvChoice) params.set("csv", csvChoice);
+    if (isEntry()) {
+      params.set("entry_kind", kind());
+      if (kind() === "entry" && $("onlyReverify").checked) params.set("only_reverify", "1");
+    }
+    const q = "?" + params;
     render(await (await fetch("/api/status" + q)).json());
   } catch (e) {
     $("pill").className = "pill failed"; $("pill").textContent = "panel not reachable";

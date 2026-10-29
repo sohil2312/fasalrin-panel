@@ -1468,6 +1468,17 @@ def main():
             log_progress(r[a_i].strip(), r[s_i], r[dl_i], r[no_i], r[de_i])
         save_rows(header, rows)
 
+    import entry_filter
+    first = max(START_ROW - 1, 1)
+    selected, summary = entry_filter.select_rows(
+        [dict(zip(header, row)) for row in rows[first:]], "old", ONLY_REVERIFY)
+    eligible_rows = {id(rows[first + i]) for i in selected}
+    print(f"[filter] {summary['total']} rows: {summary['ready']} ready, {summary['filtered']} filtered, "
+          f"{summary['skipped']} finished/held", flush=True)
+    if not selected:
+        print("[done] No eligible old applications. Review the filtering summary; nothing submitted.", flush=True)
+        return
+
     with sync_playwright() as p:
         ctx = p.chromium.launch_persistent_context(
             profile(PROFILE_DIR), headless=HEADLESS, slow_mo=SLOWMO_MS,
@@ -1534,7 +1545,7 @@ def main():
         fresh = [r for r in data if not r[s_i].strip()]
         retry = [r for r in data if r[s_i].strip() and not is_done(r[s_i])]
         held = [r for r in data if r[s_i].strip().upper().startswith(HOLD_PREFIX)]
-        pending = fresh + retry
+        pending = [r for r in fresh + retry if id(r) in eligible_rows]
         total = len(pending)
         b = collections.Counter(bucket(r[s_i]) for r in data)
         print(f"[resume] {len(data)} rows in CSV: {b['finished']} finished (submitted/approved), "
