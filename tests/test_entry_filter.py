@@ -31,11 +31,21 @@ class EntryFilterTests(unittest.TestCase):
         for value in ('-1','NaN','Infinity','oops'):
             self.assertFalse(entry_filter.positive(value))
 
-    def test_fresh_requires_each_extra_field_even_for_dairy(self):
-        for col in ('DOB','RELATIVE NAME','VILLAGE','SURVEY NO','KHATA NO','LAND'):
-            row=dict(self.row, **{col:'', 'Scheme Code':'CC043'})
-            self.assertEqual(entry_filter.select_rows([row],'fresh')[1]['filtered'],1)
-        self.assertEqual(entry_filter.select_rows([self.row],'fresh')[1]['ready'],1)
+    def test_fresh_dairy_does_not_require_land_fields(self):
+        row = dict(self.row, **{'Scheme Code': 'CC043', 'SURVEY NO': '', 'KHATA NO': '', 'LAND': ''})
+        self.assertEqual(entry_filter.select_rows([row], 'fresh')[1]['ready'], 1)
+
+    def test_fresh_crop_still_requires_land_fields(self):
+        for col in ('SURVEY NO', 'KHATA NO', 'LAND'):
+            with self.subTest(col=col):
+                row = dict(self.row, **{col: ''})
+                self.assertEqual(entry_filter.select_rows([row], 'fresh')[1]['filtered'], 1)
+
+    def test_fresh_dairy_still_requires_other_details(self):
+        for col in ('DOB', 'RELATIVE NAME', 'VILLAGE'):
+            with self.subTest(col=col):
+                row = dict(self.row, **{col: '', 'Scheme Code': 'CC043'})
+                self.assertEqual(entry_filter.select_rows([row], 'fresh')[1]['filtered'], 1)
 
     def test_progress_and_new_farmer_modes(self):
         import fasalrin_fresh as fresh

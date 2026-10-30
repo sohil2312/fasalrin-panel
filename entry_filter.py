@@ -38,13 +38,16 @@ def reasons(row, mode):
         problems.append('Missing or invalid disbursement date')
     if mode == 'fresh':
         for col, label in [('DOB', 'birthdate'), ('RELATIVE NAME', 'relative name'), ('VILLAGE', 'village'),
-                           ('SURVEY NO', 'survey number'), ('KHATA NO', 'khata number'),
                            ('NAME AS PER ADHAR', 'applicant name'), ('GENDER', 'gender'), ('ADDRESS', 'address')]:
             if not row.get(col, '').strip():
                 problems.append('Missing ' + label)
         area = fresh.area_column(list(row))
-        if not positive(row.get(area, '') if area else ''):
-            problems.append('Missing, zero or invalid land area')
+        if row.get('Scheme Code', '').strip().upper() == 'CC004':
+            for col, label in [('SURVEY NO', 'survey number'), ('KHATA NO', 'khata number')]:
+                if not row.get(col, '').strip():
+                    problems.append('Missing ' + label)
+            if not positive(row.get(area, '') if area else ''):
+                problems.append('Missing, zero or invalid land area')
         # Keep the fresh script's age, scheme and portal-data checks as well.
         if not problems:
             prepared = dict(row, _area=row.get(area, ''))
