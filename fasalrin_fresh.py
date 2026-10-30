@@ -62,7 +62,17 @@ LIMIT = 0
 
 def is_done(st: str) -> bool:
     st = (st or "").strip().upper()
-    return st in DONE or (st.startswith(HOLD) and st != f"{HOLD}:ACCOUNT")
+    return st in {"COMPLETED", "ALREADY_ON_PORTAL", "APPROVED"}
+
+
+def needs_draft_resume(status: str, detail: str) -> bool:
+    """An uncertain saved row must first reopen its portal form and check the preview."""
+    status = (status or "").strip().upper()
+    detail = (detail or "").upper()
+    if "WAS CHECK_PORTAL:ACCOUNT" in detail:
+        return False  # account popup failed before the first save
+    return ((status == HOLD or status.startswith(f"{HOLD}:")) and status != f"{HOLD}:ACCOUNT") or \
+        "WAS CHECK_PORTAL" in detail
 
 
 # ----------------------------------------------------------------------------
@@ -479,8 +489,10 @@ def block_of(branch: str, options: list[str]) -> str | None:
 def block_from_address(address: str, options: list[str]) -> str | None:
     """The block the farmer's address names: 'TA LUNAWADA' and the bank's 'VILLAGE,TALUKA,BLOCK,DISTRICT' part count
     most ('KANELA,LUNAWADA,LUNAWADA,PANCH MAHALS' -> Lunawada). A branch is not a block (Kidia farmers are in Lunawada)."""
-    # The bank writes Devgadbaria; the portal also spells it Devgadhbaria.
-    block_name = lambda value: norm(value).replace("DEVGADHBARIA", "DEVGADBARIA")
+    # A bank address repeats its district at the end. A district that is also a taluka
+    # (Dahod/Dohad) only counts when the address explicitly marks it as the taluka.
+    block_name = master_location_key
+    district_names = {"DAHOD", "MAHISAGAR", "PANCHMAHAL", "PANCHMAHALS"}
     opts = [o for o in options if o and o.strip().lower() != "select" and norm(o)]
     s = (address or "").upper()
     toks = re.findall(r"[A-Z]+", s)
@@ -489,10 +501,17 @@ def block_from_address(address: str, options: list[str]) -> str | None:
         no = block_name(o)
         for i, t in enumerate(toks):
             name = block_name(t)
+            explicit_taluka = i > 0 and toks[i - 1] in ("TA", "TAL", "TALUKA", "TQ")
+            district_mention = (i > 0 and toks[i - 1] in ("DIST", "DISTT", "DISTRICT")) or \
+                (i + 1 < len(toks) and toks[i + 1] == "GUJARAT")
+            if no in district_names and district_mention and not explicit_taluka:
+                continue
             if name == no or (len(name) >= 5 and len(no) >= 5 and (name.startswith(no) or f.same_branch(t, o)) and abs(len(name) - len(no)) <= 3):
-                score[o] += 3 if i and toks[i - 1] in ("TA", "TAL", "TALUKA", "TQ") else 1
-        for part in s.split(","):                       # a whole comma part equal to the block name
-            if block_name(part) == no:
+                score[o] += 3 if explicit_taluka else 1
+        parts = s.split(",")
+        for j, part in enumerate(parts):                # a whole comma part equal to the block name
+            district_suffix = no in district_names and j + 1 < len(parts) and block_name(parts[j + 1]) == "GUJARAT"
+            if not district_suffix and block_name(part) == no:
                 score[o] += 2
     if not score:
         return None
@@ -1004,8 +1023,8 @@ def run(csv_path: Path, regular_worklist=False):
             if r["Account No."] == acct and r.get("Status", "").strip().upper() != "RETRY":
                 r.update(rec)
     out_header = header
-    for r in rows:                      # a draft reset to retry: continued on the portal, not started again
-        r["_draft"] = not r.get("Status") and "was CHECK_PORTAL" in (r.get("Detail") or "")
+    for r in rows:                      # uncertain rows reopen the portal form before any new submission
+        r["_draft"] = needs_draft_resume(r.get("Status", ""), r.get("Detail", ""))
     for r in rows:                      # Excel problems are re-checked every run: a fixed row goes back to the queue
         if r.get("Status") in ("NO_LAND", "BAD_DATA", "SCHEME_UNKNOWN") and not precheck(r):
             r["Status"], r["Detail"] = "", "data fixed in the Excel"
@@ -1020,14 +1039,19 @@ def run(csv_path: Path, regular_worklist=False):
             log_progress(csv_path, r["Account No."], r["Status"], r["Loan App No"], r["Detail"])
         save_csv(csv_path, out_header, [{k: x.get(k, "") for k in out_header} for x in rows])
 
+    import entry_filter
+    approved = entry_filter.approved_accounts(csv_path)
+    for r in rows:
+        if r.get("Account No.", "").strip() in approved:
+            r["_approved"] = "APPROVED"
     if regular_worklist:
-        import entry_filter
         selected, summary = entry_filter.select_rows(rows, "fresh")
         todo = [rows[i] for i in selected]
         print(f"[filter] {summary['total']} rows: {summary['ready']} ready, {summary['filtered']} filtered, "
               f"{summary['skipped']} finished/held", flush=True)
     else:
-        todo = [r for r in rows if r.get("Account No.") and not is_done(r.get("Status", ""))]
+        todo = [r for r in rows if r.get("Account No.") and not r.get("_approved")
+                and not is_done(r.get("Status", ""))]
     if not todo:
         print("[done] No eligible fresh applications. Review the filtering summary; nothing submitted.", flush=True)
         return

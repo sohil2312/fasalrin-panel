@@ -39,11 +39,41 @@ class EntryFilterTests(unittest.TestCase):
 
     def test_progress_and_new_farmer_modes(self):
         import fasalrin_fresh as fresh
-        rows=[dict(self.row, Status=s) for s in ('COMPLETED','CHECK_PORTAL:submitting','NOT_IN_SYSTEM','','CHECK_PORTAL:ACCOUNT')]
-        self.assertEqual(entry_filter.select_rows(rows,'old')[0],[3])
-        self.assertEqual(entry_filter.select_rows(rows,'fresh')[0],[2,3,4])
-        self.assertFalse(fresh.is_done('CHECK_PORTAL:ACCOUNT'))
+        rows=[dict(self.row, Status=s) for s in ('COMPLETED','CHECK_PORTAL:submitting','NOT_IN_SYSTEM','','CHECK_PORTAL:ACCOUNT',
+                                                'VILLAGE_NOT_FOUND','AADHAAR_MISMATCH','APPROVED','ALREADY_ON_PORTAL')]
+        self.assertEqual(entry_filter.select_rows(rows,'old')[0],[3,5,6])
+        self.assertEqual(entry_filter.select_rows(rows,'fresh')[0],[1,2,3,4,5,6])
+        self.assertFalse(fresh.is_done('CHECK_PORTAL:submitting'))
+        self.assertFalse(fresh.is_done('VILLAGE_NOT_FOUND'))
+        self.assertTrue(fresh.is_done('APPROVED'))
         self.assertEqual(rows[2]['Status'],'NOT_IN_SYSTEM')
+
+    def test_fresh_draft_resume_keeps_check_portal_rows_on_existing_flow(self):
+        import fasalrin_fresh as fresh
+        self.assertTrue(fresh.needs_draft_resume('CHECK_PORTAL:submitting', ''))
+        self.assertTrue(fresh.needs_draft_resume('CHECK_PORTAL', ''))
+        self.assertTrue(fresh.needs_draft_resume('RETRY', 'reset to retry (was CHECK_PORTAL:DRAFT)'))
+        self.assertFalse(fresh.needs_draft_resume('CHECK_PORTAL:ACCOUNT', ''))
+        self.assertFalse(fresh.needs_draft_resume('RETRY', 'reset to retry (was CHECK_PORTAL:ACCOUNT)'))
+        self.assertFalse(fresh.needs_draft_resume('VILLAGE_NOT_FOUND', ''))
+
+    def test_branch_approval_excludes_old_status_from_fresh_preview(self):
+        import branches
+        import csv, tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / 'branches'
+            path = root / '3106/3106.csv'
+            path.parent.mkdir(parents=True)
+            row = dict(self.row, Status='VILLAGE_NOT_FOUND')
+            with path.open('w', newline='') as fh:
+                writer = csv.DictWriter(fh, fieldnames=list(row))
+                writer.writeheader(); writer.writerow(row)
+            with (path.parent / '3106_approvals.csv').open('w', newline='') as fh:
+                writer = csv.DictWriter(fh, fieldnames=['Account No.', 'Approval'])
+                writer.writeheader(); writer.writerow({'Account No.': row['Account No.'], 'Approval': 'APPROVED'})
+            with patch.object(branches, 'BRANCHES', root):
+                self.assertEqual(entry_filter.preview(path, 'fresh')['ready'], 0)
 
     def test_once_only_reverify_filter(self):
         rows=[dict(self.row,Status='AADHAAR_REVERIFY'),

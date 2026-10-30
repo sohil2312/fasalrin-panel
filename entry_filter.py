@@ -55,16 +55,15 @@ def reasons(row, mode):
 
 
 def select_rows(rows, mode, only_reverify=False):
-    import fasalrin_fresh as fresh
     if mode not in ('old', 'fresh'):
         raise ValueError('unknown entry mode')
     selected, counts = [], collections.Counter()
     skipped, filtered = 0, 0
     for index, row in enumerate(rows):
         status = row.get('Status', '').strip().upper()
-        retry_fresh_account = mode == 'fresh' and status == 'CHECK_PORTAL:ACCOUNT'
-        if status in {'COMPLETED', 'ALREADY_ON_PORTAL', 'DRY_OK'} or (
-            status.startswith('CHECK_PORTAL') and not retry_fresh_account
+        approved = (row.get('Approval') or row.get('_approved') or '').strip().upper() == 'APPROVED'
+        if approved or status in {'COMPLETED', 'ALREADY_ON_PORTAL', 'APPROVED'} or (
+            mode == 'old' and (status == 'DRY_OK' or status.startswith('CHECK_PORTAL'))
         ):
             skipped += 1
             continue
@@ -79,8 +78,7 @@ def select_rows(rows, mode, only_reverify=False):
             held = regular.is_done(status) and not retry_aadhaar
             held = held or (only_reverify and not retry_aadhaar)
         else:
-            # Fixed data can run again; old NOT_IN_SYSTEM / NO_ACTIVITY rows may enter fresh.
-            held = fresh.is_done(status) and status not in {'BAD_DATA', 'NO_LAND', 'SCHEME_UNKNOWN'}
+            held = False  # Fresh retries every nonfinished row that passes the data filter.
         if held:
             skipped += 1
         else:
@@ -90,12 +88,23 @@ def select_rows(rows, mode, only_reverify=False):
     return selected, summary
 
 
+def approved_accounts(csv_path):
+    import branches
+    path = Path(csv_path)
+    sol = path.parent.parent.name if branches.is_fresh_list(path) else (
+        path.parent.name if path.stem == path.parent.name else '')
+    return {acct for acct, result in branches.approvals(sol).items() if result.upper() == 'APPROVED'} if sol else set()
+
+
 def preview(csv_path, mode, only_reverify=False):
     import fasalrin_fresh as fresh
     with open(csv_path, newline='', encoding='utf-8-sig') as fh:
         rows = list(csv.DictReader(fh))
     records = fresh.progress_records(Path(csv_path))
+    approved = approved_accounts(csv_path)
     for row in rows:
         if row.get('Status', '').strip().upper() != 'RETRY':
             row.update(records.get(row.get('Account No.', '').strip(), {}))
+        if row.get('Account No.', '').strip() in approved:
+            row['_approved'] = 'APPROVED'
     return select_rows(rows, mode, only_reverify)[1]

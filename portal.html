@@ -757,7 +757,7 @@
           </table>
           <div class="row" id="resetRow" style="display:none">
             <button id="resetBtn" disabled>Reset ticked to retry</button>
-            <button id="resetErrorsBtn" style="display:none" disabled>Reset all errors</button>
+            <button id="resetErrorsBtn" style="display:none" disabled>Reset all for fresh</button>
             <span id="resetMsg" class="muted">Ticked → retry next run</span>
           </div>
           <div class="row">
@@ -972,8 +972,9 @@ $("resetBtn").onclick = () => {
   resetReasons(selected.map(x => x.value), n);
 };
 $("resetErrorsBtn").onclick = () => {
-  const row = document.querySelector('input[name="resetReason"][value="ERROR"]')?.closest("tr");
-  resetReasons(["ERROR"], row ? parseInt(row.children[2].innerText, 10) || 0 : 0);
+  const available = [...document.querySelectorAll('input[name="resetReason"]')];
+  const n = available.reduce((t, x) => t + (parseInt(x.closest("tr").children[2].innerText, 10) || 0), 0);
+  resetReasons(available.map(x => x.value), n);
 };
 $("exportBtn").onclick = async () => {
   $("exportMsg").className = "muted"; $("exportMsg").textContent = "exporting…";
@@ -1294,7 +1295,7 @@ function render(s) {
   const rs = sm.reasons || [];
   const canReset = !!s.csv && ["regular", "fresh", "additional", "isclaim", "pri", "prireg"].includes(listScheme(s.csv));
   const loanList = ["regular", "fresh"].includes(listScheme(s.csv));
-  const NO_RESET = loanList ? ["OTHER_BRANCH", "CHECK_PORTAL"] : ["CLAIM_CHECK_PORTAL", "MISMATCH", "WRONG_CLAIM", "NO_INT_SUB_AMT"];
+  const NO_RESET = loanList ? [] : ["CLAIM_CHECK_PORTAL", "MISMATCH", "WRONG_CLAIM", "NO_INT_SUB_AMT"];
   const ticked = new Set([...document.querySelectorAll('input[name="resetReason"]:checked')].map(x => x.value));
   $("resetHead").textContent = canReset ? "Retry" : "";
   $("reasons").innerHTML = rs.length ? rs.map(r => `<tr><td>${canReset && !NO_RESET.includes(r.reason)
@@ -1302,10 +1303,10 @@ function render(s) {
       <td>${esc(r.sheet)}</td><td class="num">${r.count}</td>
       <td class="muted">${esc(r.todo)}</td></tr>`).join("") : '<tr><td colspan="4" class="muted">none</td></tr>';
   $("resetRow").style.display = canReset && rs.some(r => !NO_RESET.includes(r.reason)) ? "" : "none";
-  const errorCount = loanList ? (rs.find(r => r.reason === "ERROR")?.count || 0) : 0;
-  $("resetErrorsBtn").style.display = errorCount ? "" : "none";
-  $("resetErrorsBtn").textContent = `Reset all errors (${errorCount})`;
-  $("resetErrorsBtn").disabled = busy || !errorCount;
+  const retryCount = loanList ? rs.filter(r => !NO_RESET.includes(r.reason)).reduce((n, r) => n + r.count, 0) : 0;
+  $("resetErrorsBtn").style.display = retryCount ? "" : "none";
+  $("resetErrorsBtn").textContent = `Reset all for fresh (${retryCount})`;
+  $("resetErrorsBtn").disabled = busy || !retryCount;
   document.querySelectorAll('input[name="resetReason"]').forEach(x => x.onchange = () => { $("resetBtn").disabled = busy || !document.querySelector('input[name="resetReason"]:checked'); });
   $("resetBtn").disabled = busy || !document.querySelector('input[name="resetReason"]:checked');
   $("exportBtn").disabled = !s.csv || !rs.length;

@@ -657,6 +657,13 @@ REASONS = [   # (status or prefix, sheet name, what to do)
     ("APPLICANT_INCOMPLETE", "Applicant incomplete", "Applicant tab missing state / district / village etc."),
     ("ACCT_NOT_IN_DROPDOWN", "Account not offered",  "Portal does not offer this account for the Aadhaar"),
     ("NO_ACCT_DROPDOWN",     "No account list",      "Farmer exists but the popup shows no account list"),
+    ("EXISTS_ON_PORTAL",     "Beneficiary exists",  "Fresh entry found this Aadhaar on the portal; see Detail"),
+    ("AADHAAR_MISMATCH",     "Aadhaar name mismatch", "Aadhaar name did not match; correct the master if needed"),
+    ("VERIFY_FAILED",        "Aadhaar verify failed", "Aadhaar verification did not pass; see Detail"),
+    ("VILLAGE_NOT_FOUND",    "Village not found",   "Village did not match the chosen taluka; check VILLAGE and TALUKA"),
+    ("NO_LAND",              "No land details",     "Crop loan needs survey number, khata number, and land area"),
+    ("BAD_DATA",             "Bad data",            "Correct the invalid master data shown in Detail"),
+    ("SCHEME_UNKNOWN",       "Unknown scheme",      "Scheme Code must be CC004 or CC043"),
     ("SCHEME_MISMATCH",      "Scheme mismatch",      "Activity does not match the Primary Activity (e.g. Animal Husbandry): "
                                                      "add an activity under it or change the primary activity"),
     ("OTHER_BRANCH",         "Other branch",         "Account does not start with this SOL"),
@@ -771,8 +778,13 @@ def hand_work(csv_path) -> dict:
     else:
         with open(csv_path, newline="", encoding="utf-8-sig") as fh:
             rows = list(csv.DictReader(fh))
+    scheme = scheme_of(csv_path)
+    approved = approvals(Path(csv_path).parent.parent.name if scheme == "fresh" else Path(csv_path).parent.name) \
+        if scheme in ("regular", "fresh") else {}
     out = {k: [] for k, _, _ in reasons}
     for r in rows:
+        if (r.get("Approval") or approved.get((r.get(f.COL_ACCT) or "").strip()) or "").upper() == "APPROVED":
+            continue
         k = reason_of(r.get(f.COL_STATUS) or "", reasons)
         if k:
             out[k].append(r)
@@ -984,7 +996,7 @@ def apply_pri_corrections(csv_path, rows_in) -> dict:
 
 
 # ---- IS regular: reset hand-work rows so the next entry run tries them again -----------------------
-NOT_RESETTABLE = {"OTHER_BRANCH", "CHECK_PORTAL"}   # a draft or submitted application may exist
+NOT_RESETTABLE = set()  # fresh entry checks saved drafts and the preview before submitting
 
 
 # IS additional: a claim may already exist on the portal for these -> never filed again by a reset
@@ -1066,11 +1078,12 @@ def reset_hand_work(csv_path, reasons: list[str]) -> dict:
     f.INPUT_CSV = f.OUTPUT_CSV = str(csv_path)
     f.PROGRESS_CSV = str(csv_path.with_name(csv_path.stem + "_progress.csv"))
     header, rows, ix = f.load_rows()
+    approved = {acct for acct, result in approvals(csv_path.parent.name).items() if result.upper() == "APPROVED"}
     done = collections.Counter()
     stamp = datetime.now().strftime("%d-%m-%Y %H:%M")
     for r in rows[1:]:
         k = reason_of(r[ix[f.COL_STATUS]] or "")
-        if k not in want:
+        if k not in want or r[ix[f.COL_ACCT]].strip() in approved:
             continue
         old = r[ix[f.COL_STATUS]]
         r[ix[f.COL_STATUS]] = f.RETRY_STATUS
@@ -1084,16 +1097,17 @@ def reset_hand_work(csv_path, reasons: list[str]) -> dict:
 
 def reset_fresh(csv_path, reasons: list[str]) -> dict:
     """IS fresh work list: rows whose hand-work reason is in `reasons` -> back in the queue (a blank Status in the
-    progress file wins over the old one). CHECK_PORTAL stays held because a draft may exist."""
+    progress file wins over the old one). Saved drafts reopen through the portal before submission."""
     import fasalrin_fresh as ff
     want = [k for k in reasons if k in {r[0] for r in FRESH_REASONS} and k not in NOT_RESETTABLE]
     if not want:
         raise ValueError("tick at least one reason that can be reset")
     stamp = datetime.now().strftime("%d-%m-%Y %H:%M")
     done = collections.Counter()
+    approved = {acct for acct, result in approvals(csv_path.parent.parent.name).items() if result.upper() == "APPROVED"}
     for r in _fresh_rows(csv_path):
         k = reason_of(r.get(f.COL_STATUS) or "", FRESH_REASONS)
-        if k not in want:
+        if k not in want or (r.get(f.COL_ACCT) or "").strip() in approved:
             continue
         ff.log_progress(csv_path, (r.get(f.COL_ACCT) or "").strip(), "", "",
                         f"reset to retry {stamp} (was {r.get(f.COL_STATUS)})")
