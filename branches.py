@@ -984,8 +984,7 @@ def apply_pri_corrections(csv_path, rows_in) -> dict:
 
 
 # ---- IS regular: reset hand-work rows so the next entry run tries them again -----------------------
-NOT_RESETTABLE = {"OTHER_BRANCH", "ERROR"}   # never ours / retried anyway (CHECK_PORTAL: the run re-opens the draft,
-                                              # and an already submitted one is caught on the preview)   # could double-submit / never ours / retried anyway
+NOT_RESETTABLE = {"OTHER_BRANCH", "CHECK_PORTAL"}   # a draft or submitted application may exist
 
 
 # IS additional: a claim may already exist on the portal for these -> never filed again by a reset
@@ -1085,7 +1084,7 @@ def reset_hand_work(csv_path, reasons: list[str]) -> dict:
 
 def reset_fresh(csv_path, reasons: list[str]) -> dict:
     """IS fresh work list: rows whose hand-work reason is in `reasons` -> back in the queue (a blank Status in the
-    progress file wins over the old one). CHECK_PORTAL (a draft may exist) and ERROR (retried anyway) never."""
+    progress file wins over the old one). CHECK_PORTAL stays held because a draft may exist."""
     import fasalrin_fresh as ff
     want = [k for k in reasons if k in {r[0] for r in FRESH_REASONS} and k not in NOT_RESETTABLE]
     if not want:

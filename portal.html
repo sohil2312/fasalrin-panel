@@ -757,6 +757,7 @@
           </table>
           <div class="row" id="resetRow" style="display:none">
             <button id="resetBtn" disabled>Reset ticked to retry</button>
+            <button id="resetErrorsBtn" style="display:none" disabled>Reset all errors</button>
             <span id="resetMsg" class="muted">Ticked → retry next run</span>
           </div>
           <div class="row">
@@ -954,12 +955,9 @@ $("upBtn").onclick = async () => {
   $("upFile").value = ""; $("upBtn").disabled = true;
   csvChoice = res.csv; poll();
 };
-$("resetBtn").onclick = async () => {
-  const reasons = [...document.querySelectorAll('input[name="resetReason"]:checked')].map(x => x.value);
-  if (!reasons.length) return;
-  const n = [...document.querySelectorAll('input[name="resetReason"]:checked')]
-    .reduce((t, x) => t + (parseInt(x.closest("tr").children[2].innerText, 10) || 0), 0);
-  if (!confirm(`Reset ${n} hand-work rows (${reasons.join(", ")}) to RETRY? The next run will try them again.`)) return;
+async function resetReasons(reasons, n) {
+  if (!reasons.length || !n) return;
+  if (!confirm(`Reset ${n} rows (${reasons.join(", ")}) to retry? The next run will try them again.`)) return;
   $("resetMsg").className = "muted"; $("resetMsg").textContent = "resetting…";
   const r = await post("/api/reset_hand", {csv: $("csv").value, reasons});
   if (r.error) { $("resetMsg").className = "err"; $("resetMsg").textContent = r.error; return; }
@@ -967,6 +965,15 @@ $("resetBtn").onclick = async () => {
     Object.entries(r.reset).map(([k, v]) => `${k} ${v}`).join(", ") + ". Start the entry job again to retry them.";
   document.querySelectorAll('input[name="resetReason"]').forEach(x => x.checked = false);
   poll();
+}
+$("resetBtn").onclick = () => {
+  const selected = [...document.querySelectorAll('input[name="resetReason"]:checked')];
+  const n = selected.reduce((t, x) => t + (parseInt(x.closest("tr").children[2].innerText, 10) || 0), 0);
+  resetReasons(selected.map(x => x.value), n);
+};
+$("resetErrorsBtn").onclick = () => {
+  const row = document.querySelector('input[name="resetReason"][value="ERROR"]')?.closest("tr");
+  resetReasons(["ERROR"], row ? parseInt(row.children[2].innerText, 10) || 0 : 0);
 };
 $("exportBtn").onclick = async () => {
   $("exportMsg").className = "muted"; $("exportMsg").textContent = "exporting…";
@@ -1286,8 +1293,8 @@ function render(s) {
   stats($("sumStats"), Object.entries(sm.status || {}).map(([k, v]) => [label(k), v]));
   const rs = sm.reasons || [];
   const canReset = !!s.csv && ["regular", "fresh", "additional", "isclaim", "pri", "prireg"].includes(listScheme(s.csv));
-  const NO_RESET = ["additional", "isclaim", "pri", "prireg"].includes(listScheme(s.csv))   // a claim may exist on the portal
-    ? ["CLAIM_CHECK_PORTAL", "MISMATCH", "WRONG_CLAIM", "NO_INT_SUB_AMT"] : ["OTHER_BRANCH", "ERROR"];
+  const loanList = ["regular", "fresh"].includes(listScheme(s.csv));
+  const NO_RESET = loanList ? ["OTHER_BRANCH", "CHECK_PORTAL"] : ["CLAIM_CHECK_PORTAL", "MISMATCH", "WRONG_CLAIM", "NO_INT_SUB_AMT"];
   const ticked = new Set([...document.querySelectorAll('input[name="resetReason"]:checked')].map(x => x.value));
   $("resetHead").textContent = canReset ? "Retry" : "";
   $("reasons").innerHTML = rs.length ? rs.map(r => `<tr><td>${canReset && !NO_RESET.includes(r.reason)
@@ -1295,6 +1302,10 @@ function render(s) {
       <td>${esc(r.sheet)}</td><td class="num">${r.count}</td>
       <td class="muted">${esc(r.todo)}</td></tr>`).join("") : '<tr><td colspan="4" class="muted">none</td></tr>';
   $("resetRow").style.display = canReset && rs.some(r => !NO_RESET.includes(r.reason)) ? "" : "none";
+  const errorCount = loanList ? (rs.find(r => r.reason === "ERROR")?.count || 0) : 0;
+  $("resetErrorsBtn").style.display = errorCount ? "" : "none";
+  $("resetErrorsBtn").textContent = `Reset all errors (${errorCount})`;
+  $("resetErrorsBtn").disabled = busy || !errorCount;
   document.querySelectorAll('input[name="resetReason"]').forEach(x => x.onchange = () => { $("resetBtn").disabled = busy || !document.querySelector('input[name="resetReason"]:checked'); });
   $("resetBtn").disabled = busy || !document.querySelector('input[name="resetReason"]:checked');
   $("exportBtn").disabled = !s.csv || !rs.length;
