@@ -102,7 +102,9 @@ To run it on a free Oracle Cloud machine in India instead (laptop can stay off),
 1. **Master list**: upload the bank's pendency `.xlsx` (all branches; saved in `master/`). Every SOL is listed.
    Optional `DISTRICT` and `TALUKA` columns at the end of the loan master override location guesses during entry.
    Fill them with portal place names for each row; common spelling variants (Lunawada/Lunavada,
-   Dahod/Dohad, Devgadhbarida/Devgadbaria) are accepted. An unmatched filled value stops that row for review.
+   Dahod/Dohad, Devgadhbarida/Devgadbaria) and unique one-letter variations are accepted.
+   A filled `VILLAGE` is also matched first, including unique spelling variations; blank uses `ADDRESS`.
+   An unmatched or ambiguous filled value stops that row for review.
 2. **Build** a SOL → `branches/<SOL>/<SOL>.csv` = that SOL's master rows with Status **Pending** only (master Status
    kept as `MIS Status`), compared with that branch's own records in `branches/<SOL>/`: `<SOL>_progress.csv`,
    `reports/` (portal reports), `<SOL>_approvals.csv`. Rebuilding from a newer master keeps all progress.

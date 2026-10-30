@@ -41,11 +41,33 @@ class LocationColumnTests(unittest.TestCase):
             with self.subTest(source=source):
                 self.assertEqual(fresh.master_location_option(source, ["Select", portal], "TALUKA"), portal)
 
+    def test_unique_small_taluka_variation_matches(self):
+        self.assertEqual(fresh.master_location_option("Kadan", ["Select", "Kadana"], "TALUKA"), "Kadana")
+
+    def test_ambiguous_taluka_variation_stops(self):
+        with self.assertRaisesRegex(RuntimeError, "not a unique portal option"):
+            fresh.master_location_option("Kadan", ["Select", "Kadana", "Kadam"], "TALUKA")
+
+    def test_master_village_variation_takes_priority_over_address(self):
+        options = ["Select", "Dudhiya", "Sagtala"]
+        self.assertEqual(fresh.match_master_village("Dudhia", "AT SAGTALA", options, "Dabhva|Devgadbaria"),
+                         "Dudhiya")
+
+    def test_unknown_master_village_does_not_guess_from_address(self):
+        options = ["Select", "Dudhiya", "Sagtala"]
+        self.assertIsNone(fresh.match_master_village("Unknown Village", "AT SAGTALA", options,
+                                                     "Dabhva|Devgadbaria"))
+
     def test_regular_row_carries_district_and_taluka(self):
         header = ["ADDRESS", "Branch Name", "DISTRICT", "TALUKA"]
         row = ["DIST DAHOD", "Dabhva", "Dahod", "Devgadbaria"]
         self.assertEqual(regular.land_of(row, dict(zip(header, range(len(header)))))["taluka"], "Devgadbaria")
         self.assertEqual(regular.land_of(row, dict(zip(header, range(len(header)))))["district"], "Dahod")
+
+    def test_regular_row_carries_explicit_village(self):
+        header = ["ADDRESS", "VILLAGE"]
+        row = ["AT SAGTALA", "Dudhia"]
+        self.assertEqual(regular.land_of(row, dict(zip(header, range(len(header)))))["village"], "Dudhia")
 
     def test_master_templates_end_with_location_columns(self):
         root = Path(__file__).resolve().parents[1]

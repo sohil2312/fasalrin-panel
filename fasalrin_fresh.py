@@ -290,6 +290,13 @@ def match_village(want: str, options: list[str], cands: list[tuple[str, bool]] |
     return None
 
 
+def match_master_village(village: str, address: str, options: list[str], branch_block: str) -> str | None:
+    """Use a filled master VILLAGE first; infer from ADDRESS only when it is blank."""
+    if (village or "").strip():
+        return match_village(village, options)
+    return match_village(address, options, address_candidates(address, branch_block))
+
+
 def locked(loc) -> bool:
     """A field the portal fills itself and does not let us change (known farmer: disabled / read-only)."""
     try:
@@ -517,7 +524,10 @@ def master_location_key(value: str) -> str:
 def master_location_option(value: str, options: list[str], column: str) -> str:
     """Resolve an explicit master location to one portal option, without guessing."""
     wanted = master_location_key(value)
-    matches = [o for o in options if master_location_key(o) == wanted]
+    choices = [o for o in options if o and not norm(o).startswith("SELECT")]
+    matches = [o for o in choices if master_location_key(o) == wanted]
+    if not matches and len(wanted) >= 5:
+        matches = [o for o in choices if one_edit(master_location_key(o), wanted)]
     if len(matches) != 1:
         raise RuntimeError(f"{column} {value!r} is not a unique portal option")
     return matches[0]
