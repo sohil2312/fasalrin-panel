@@ -9,6 +9,15 @@ import portal
 
 
 class SampleTests(unittest.TestCase):
+    def test_loan_master_template_does_not_include_portal_column(self):
+        sample = portal.ROOT / 'samples/is_regular_master_sample.xlsx'
+        wb = load_workbook(sample, read_only=True)
+        headers = [c.value for c in next(wb.worksheets[0].iter_rows())]
+        wb.close()
+        self.assertNotIn('PORTAL', headers)
+        self.assertEqual(headers[-2:], ['DISTRICT', 'TALUKA'])
+        self.assertNotIn('PORTAL', branches.read_master(sample)[0])
+
     def test_claim_templates_have_required_columns(self):
         for name, required in [('is_regular_claim_sample.xlsx', branches.ISCLAIM_REQUIRED),
                                ('is_additional_claim_sample.xlsx', branches.ADDITIONAL_REQUIRED),
