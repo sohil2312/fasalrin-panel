@@ -62,7 +62,10 @@ def select_rows(rows, mode, only_reverify=False):
     skipped, filtered = 0, 0
     for index, row in enumerate(rows):
         status = row.get('Status', '').strip().upper()
-        if status in {'COMPLETED', 'ALREADY_ON_PORTAL', 'DRY_OK'} or status.startswith('CHECK_PORTAL'):
+        retry_fresh_account = mode == 'fresh' and status == 'CHECK_PORTAL:ACCOUNT'
+        if status in {'COMPLETED', 'ALREADY_ON_PORTAL', 'DRY_OK'} or (
+            status.startswith('CHECK_PORTAL') and not retry_fresh_account
+        ):
             skipped += 1
             continue
         problems = reasons(row, mode)

@@ -62,7 +62,7 @@ LIMIT = 0
 
 def is_done(st: str) -> bool:
     st = (st or "").strip().upper()
-    return st in DONE or st.startswith(HOLD)
+    return st in DONE or (st.startswith(HOLD) and st != f"{HOLD}:ACCOUNT")
 
 
 # ----------------------------------------------------------------------------
@@ -590,6 +590,51 @@ def to_dashboard(page):
         pass
 
 
+def open_known_farmer(page, acct: str) -> str | None:
+    """Open an existing beneficiary, even when this loan account is not linked yet."""
+    try:
+        picked = f.choose_account(page, acct)  # waits for the account dropdown to load
+    except PWTimeout:
+        picked = None
+    ok_btn = page.locator(".modal-content:visible button", has_text=BTN("OK"))
+    if not ok_btn.count():
+        to_dashboard(page)
+        return "Beneficiary exists, but the popup has no OK button"
+    if not picked:
+        print(f"\n    Beneficiary exists; account {acct} is not in the popup list -> check Account tab", flush=True)
+    else:
+        print(f"\n    Beneficiary details exist -> OK (account {acct} in its list)", flush=True)
+    ok_btn.first.click()
+    page.wait_for_timeout(500)
+    more = page.locator('.modal-content:visible button', has_text=BTN("(?:OK|YES|CONFIRM|PROCEED)"))
+    if more.count() and f.active_pane(page) != "formTabs-tabpane-1":
+        more.first.click()
+    try:
+        wait_for(page, lambda: f.active_pane(page) == "formTabs-tabpane-1", 10, "application form after OK")
+    except StuckError:
+        f.shot(page, f"fresh_exists_{acct}")
+        to_dashboard(page)
+        return "Beneficiary exists, but OK did not open the application form"
+    return None
+
+
+def fill_account_tab(page, acct: str, known: bool) -> str:
+    """Only add an account when the portal's Account tab is blank or already matches."""
+    p2 = pane(page, 2)
+    if known:
+        if not p2.locator('input[name="accountNumber"]').count():
+            return "account number input missing on the portal"
+        return f.ensure_account(page, acct)
+    fill_text(page, p2.locator('input[name="accountNumber"]').first, acct)
+    fill_text(page, p2.locator('input[name="confirmAccountNumber"]').first, acct)
+    select_label(p2, "accountHolder", "SINGLE", page)
+    check_form(page, p2, {"accountNumber": acct, "confirmAccountNumber": acct, "accountHolder": "SINGLE"}, "account tab",
+               {"accountNumber": lambda: fill_text(page, p2.locator('input[name="accountNumber"]').first, acct),
+                "confirmAccountNumber": lambda: fill_text(page, p2.locator('input[name="confirmAccountNumber"]').first, acct),
+                "accountHolder": lambda: select_label(p2, "accountHolder", "SINGLE", page)})
+    return ""
+
+
 # ----------------------------------------------------------------------------
 # one row
 # ----------------------------------------------------------------------------
@@ -625,32 +670,9 @@ def process_row(page, d: dict, stage: dict, mark_submitting):
     stage["s"] = "fetched"
     known = res == "exists"
     if known:
-        sel = page.locator('.modal-content:visible select[name="accountNumbers"]')
-        offered = sel.first.evaluate("s => [...s.options].map(o => o.value.trim())") if sel.count() else []
-        ok_btn = page.locator(".modal-content:visible button", has_text=BTN("OK"))
-        if not ok_btn.count():
-            page.locator('.modal-content:visible button', has_text=BTN("(?:BACK TO DASHBOARD|CLOSE)")).first.click()
-            to_dashboard(page)
-            return "EXISTS_ON_PORTAL", "", "Beneficiary details exist but the popup has no OK: check by hand"
-        if acct not in offered:
-            to_dashboard(page)
-            return f"{HOLD}:ACCOUNT", "", "Beneficiary exists, but account not offered in the portal list; check by hand"
-        sel.first.select_option(acct)
-        sel.first.dispatch_event("change")
-        page.wait_for_timeout(200)
-        # "Beneficiary details exist in the system" -> OK, then the application is entered the fresh way
-        print(f"\n    Beneficiary details exist -> OK (account {acct} in its list)", flush=True)
-        ok_btn.first.click()
-        page.wait_for_timeout(500)
-        more = page.locator('.modal-content:visible button', has_text=BTN("(?:OK|YES|CONFIRM|PROCEED)"))
-        if more.count() and f.active_pane(page) != "formTabs-tabpane-1":
-            more.first.click()                        # a confirmation, if the portal asks one
-        try:
-            wait_for(page, lambda: f.active_pane(page) == "formTabs-tabpane-1", 10, "application form after OK")
-        except StuckError:                            # OK did not open the form (e.g. an account must be picked)
-            f.shot(page, f"fresh_exists_{acct}")
-            to_dashboard(page)
-            return "EXISTS_ON_PORTAL", "", "Beneficiary details exist: OK did not open the form (account not in its list?)"
+        why = open_known_farmer(page, acct)
+        if why:
+            return f"{HOLD}:ACCOUNT", "", why
     elif res == "invalid_aadhaar":
         to_dashboard(page)
         return "BAD_DATA", "", "portal: Please enter valid Aadhaar Number - correct it in the file"
@@ -786,14 +808,12 @@ def process_row(page, d: dict, stage: dict, mark_submitting):
             to_dashboard(page)
             return "APPLICANT_INCOMPLETE", "", "applicant tab: " + str(e)[len("portal validation:"):][:120]
         raise
+    why = fill_account_tab(page, acct, known)
+    if why:
+        f.shot(page, f"fresh_account_{acct}")
+        to_dashboard(page)
+        return f"{HOLD}:DRAFT", "", why[:200]
     p2 = pane(page, 2)
-    fill_text(page, p2.locator('input[name="accountNumber"]').first, acct)
-    fill_text(page, p2.locator('input[name="confirmAccountNumber"]').first, acct)
-    select_label(p2, "accountHolder", "SINGLE", page)
-    check_form(page, p2, {"accountNumber": acct, "confirmAccountNumber": acct, "accountHolder": "SINGLE"}, "account tab",
-               {"accountNumber": lambda: fill_text(page, p2.locator('input[name="accountNumber"]').first, acct),
-                "confirmAccountNumber": lambda: fill_text(page, p2.locator('input[name="confirmAccountNumber"]').first, acct),
-                "accountHolder": lambda: select_label(p2, "accountHolder", "SINGLE", page)})
     save2 = p2.locator("button", has_text=BTN("(?:SAVE|UPDATE) & CONTINUE")).first
     save2.click()
     stage["s"] = "account_saved"

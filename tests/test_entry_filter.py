@@ -38,9 +38,11 @@ class EntryFilterTests(unittest.TestCase):
         self.assertEqual(entry_filter.select_rows([self.row],'fresh')[1]['ready'],1)
 
     def test_progress_and_new_farmer_modes(self):
-        rows=[dict(self.row, Status=s) for s in ('COMPLETED','CHECK_PORTAL:submitting','NOT_IN_SYSTEM','')]
+        import fasalrin_fresh as fresh
+        rows=[dict(self.row, Status=s) for s in ('COMPLETED','CHECK_PORTAL:submitting','NOT_IN_SYSTEM','','CHECK_PORTAL:ACCOUNT')]
         self.assertEqual(entry_filter.select_rows(rows,'old')[0],[3])
-        self.assertEqual(entry_filter.select_rows(rows,'fresh')[0],[2,3])
+        self.assertEqual(entry_filter.select_rows(rows,'fresh')[0],[2,3,4])
+        self.assertFalse(fresh.is_done('CHECK_PORTAL:ACCOUNT'))
         self.assertEqual(rows[2]['Status'],'NOT_IN_SYSTEM')
 
     def test_once_only_reverify_filter(self):
@@ -104,21 +106,65 @@ class EntryFilterTests(unittest.TestCase):
             self.assertEqual(saved[0]['Status'],'COMPLETED')
             self.assertEqual(saved[0]['RELATIVE NAME'],'Relative')
 
-    def test_fresh_holds_known_farmer_when_account_not_offered(self):
+    def test_fresh_opens_known_farmer_when_account_not_offered(self):
         from unittest.mock import MagicMock
         import fasalrin_fresh as fresh
         page = MagicMock()
         page.locator.return_value.count.return_value = 1
-        page.locator.return_value.first.evaluate.return_value = ['another-account']
-        with patch.object(fresh.f, 'open_fetch_popup'), \
-             patch.object(fresh.f, 'fetch_record', return_value='exists'), \
+        with patch.object(fresh.f, 'choose_account', return_value=False) as choose, \
+             patch.object(fresh.f, 'active_pane', return_value='formTabs-tabpane-1'), \
+             patch.object(fresh, 'wait_for', side_effect=lambda page, fn, seconds, what: fn()), \
              patch.object(fresh, 'to_dashboard') as dashboard:
-            status, app, detail = fresh.process_row(page, self.row, {}, lambda: None)
-        self.assertEqual(status, 'CHECK_PORTAL:ACCOUNT')
-        self.assertEqual(app, '')
-        self.assertIn('not offered', detail)
+            detail = fresh.open_known_farmer(page, self.row['Account No.'])
+        self.assertIsNone(detail)
+        choose.assert_called_once_with(page, self.row['Account No.'])
+        page.locator.return_value.first.click.assert_called_once()
+        dashboard.assert_not_called()
+
+    def test_fresh_holds_when_unlisted_account_cannot_open_form(self):
+        from unittest.mock import MagicMock
+        import fasalrin_fresh as fresh
+        page = MagicMock()
+        page.locator.return_value.count.return_value = 1
+        with patch.object(fresh.f, 'choose_account', return_value=False), \
+             patch.object(fresh.f, 'active_pane', return_value=''), \
+             patch.object(fresh, 'wait_for', side_effect=fresh.StuckError('not opened')), \
+             patch.object(fresh.f, 'shot'), patch.object(fresh, 'to_dashboard') as dashboard:
+            detail = fresh.open_known_farmer(page, self.row['Account No.'])
+        self.assertIn('did not open', detail)
         dashboard.assert_called_once_with(page)
-        page.locator.return_value.first.click.assert_not_called()
+
+    def test_fresh_checks_known_account_tab_before_editing(self):
+        from unittest.mock import MagicMock
+        import fasalrin_fresh as fresh
+        page = MagicMock()
+        with patch.object(fresh.f, 'ensure_account', return_value='another account') as ensure, \
+             patch.object(fresh, 'fill_text') as fill:
+            detail = fresh.fill_account_tab(page, self.row['Account No.'], known=True)
+        self.assertEqual(detail, 'another account')
+        ensure.assert_called_once_with(page, self.row['Account No.'])
+        fill.assert_not_called()
+
+    def test_account_picker_waits_for_late_portal_option(self):
+        from unittest.mock import MagicMock
+        import fasalrin_regular as regular
+        page = MagicMock()
+        sel = page.locator.return_value.first
+        sel.evaluate.side_effect = [[''], ['', self.row['Account No.']]]
+        self.assertTrue(regular.choose_account(page, self.row['Account No.']))
+        sel.select_option.assert_called_once_with(self.row['Account No.'])
+
+    def test_known_account_tab_never_overwrites_another_account(self):
+        from unittest.mock import MagicMock
+        import fasalrin_regular as regular
+        import fasalrin_fresh as fresh
+        page = MagicMock()
+        with patch.object(regular, 'pane', return_value=MagicMock()), \
+             patch.object(fresh, 'form_values', return_value={'accountNumber': '99990001'}), \
+             patch.object(fresh, 'fill_text') as fill:
+            detail = regular.ensure_account(page, self.row['Account No.'])
+        self.assertIn('another account', detail)
+        fill.assert_not_called()
 
     def test_backend_routes_fresh_and_blocks_empty_queue(self):
         import csv, tempfile

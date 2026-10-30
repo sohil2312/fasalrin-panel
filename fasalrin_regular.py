@@ -598,7 +598,13 @@ def choose_account(page, acct: str):
         if page.locator('.modal-content:visible button', has_text=BTN("BACK TO DASHBOARD")).count():
             return None
         raise
-    opts = sel.evaluate("s => [...s.options].map(o => o.value.trim())")
+    def options():
+        return sel.evaluate("s => [...s.options].map(o => o.value.trim())")
+    try:
+        opts = wait_for(page, lambda: (values if acct in (values := options()) else None),
+                        8, "account in beneficiary list")
+    except StuckError:
+        opts = options()
     if acct not in opts:
         print(f"\n    dropdown accounts: {opts}")
         return False
