@@ -962,7 +962,12 @@ def fill_residence(page, land: dict | None) -> str:
         return ""
     empty = lambda n: (fr.form_values(p1, [n]).get(n) or "").strip().lower() in ("", "select")
     todo = [n for n in names if empty(n) and n not in fr.locked_names(p1, [n])]
-    if not todo:
+    district = (land or {}).get("district", "").strip()
+    taluka = (land or {}).get("taluka", "").strip()
+    current = fr.form_values(p1, ["districtId", "resSubDistrictId"])
+    district_differs = district and fr.master_location_key(current["districtId"]) != fr.master_location_key(district)
+    taluka_differs = taluka and fr.master_location_key(current["resSubDistrictId"]) != fr.master_location_key(taluka)
+    if not todo and not district_differs and not taluka_differs:
         return ""
     address = ((land or {}).get("address") or "").strip()
     branch = (land or {}).get("branch", "")
@@ -972,12 +977,19 @@ def fill_residence(page, land: dict | None) -> str:
     if "stateId" in todo:
         fr.select_label(p1, "stateId", RES_STATE, page, wait_options=15)
         want["stateId"] = RES_STATE
-    if "districtId" in todo or "stateId" in todo:
-        fr.select_label(p1, "districtId", RES_DISTRICT, page, wait_options=15)
-        want["districtId"] = RES_DISTRICT
+    if district or "districtId" in todo or "stateId" in todo:
+        if district:
+            wait_for(page, lambda: len(fr.options_of(p1, "districtId")) > 1, 10, "district options")
+        name = fr.master_location_option(district, fr.options_of(p1, "districtId"), "DISTRICT") if district else RES_DISTRICT
+        fr.select_label(p1, "districtId", name, page, wait_options=15)
+        if district and fr.master_location_key(fr.form_values(p1, ["districtId"])["districtId"]) != fr.master_location_key(name):
+            return f"portal district does not match master DISTRICT {district!r}"
+        want["districtId"] = name
     blk = fr.form_values(p1, ["resSubDistrictId"]).get("resSubDistrictId", "")
-    if empty("resSubDistrictId"):
-        blk = fr.pick_block(page, p1, "resSubDistrictId", branch, address)
+    if empty("resSubDistrictId") or (taluka and fr.master_location_key(blk) != fr.master_location_key(taluka)):
+        blk = fr.pick_block(page, p1, "resSubDistrictId", branch, address, taluka)
+        if taluka and fr.master_location_key(fr.form_values(p1, ["resSubDistrictId"])["resSubDistrictId"]) != fr.master_location_key(blk):
+            return f"portal taluka does not match master TALUKA {taluka!r}"
         want["resSubDistrictId"] = blk
     if empty("resVillageId"):
         wait_for(page, lambda: len(fr.options_of(p1, "resVillageId")) > 1, 10, "residence villages")
@@ -1044,7 +1056,8 @@ def ensure_account(page, acct: str) -> str:
 # process one CSV row -> (status, drawing_limit_entered, app_no, detail)
 # ----------------------------------------------------------------------------
 LAND_COLS = {"address": r"ADDRESS", "survey": r"SURVEY\s*(NO\.?|NUM(BER)?)", "khata": r"KHATA\s*(NO\.?|NUM(BER)?)",
-             "area": r"(LAND\s*AREA|LAND|AREA)\s*(\(.*\))?", "branch": r"Branch Name"}
+             "area": r"(LAND\s*AREA|LAND|AREA)\s*(\(.*\))?", "branch": r"Branch Name",
+             "district": r"DISTRICT", "taluka": r"TALUKA"}
 
 
 def land_of(r: list, idx: dict) -> dict:
@@ -1106,7 +1119,8 @@ def add_activity(page, act, scheme: str, activity: str, land: dict, dp: int, ope
                "liveStockCode": lambda: fr.select_label(act, "liveStockCode", fr.AH_ANIMAL, page),
                "unitCount": lambda: fr.fill_text(page, act.locator('input[name="unitCount"]').first, fr.AH_UNITS)}
     try:
-        v = fr.find_location(page, land["address"], land.get("branch", ""), address=land["address"], from_address=True)
+        v = fr.find_location(page, land["address"], land.get("branch", ""), address=land["address"],
+                             from_address=True, taluka=land.get("taluka", ""))
     except fr.VillageError:
         return f"village not found in the portal list from ADDRESS {land['address'][:70]!r}: add activity by hand"
     print(f"\n    activity added: {activity}, village {v}", flush=True)
@@ -1199,6 +1213,9 @@ def process_row(page, acct: str, aadhaar: str, disb: date, dp: int, stage: dict,
         res_note = fill_residence(page, land)
     except RuntimeError as e:                         # (StuckError too) the portal refused a value: hand work, with why
         res_note = f"applicant residence from ADDRESS failed: {str(e)[:110]}"
+    if res_note and ((land or {}).get("district") or (land or {}).get("taluka")):
+        click_side_nav(page, "/dashboard")
+        return "APPLICANT_INCOMPLETE", "", "", res_note[:150]
     pane(page, 1).locator("button", has_text=BTN("(?:UPDATE|SAVE) & CONTINUE")).first.click()
     stage["s"] = "applicant"
 

@@ -502,24 +502,50 @@ def usual_block(branch: str, options: list[str]) -> str | None:
     return c.most_common(1)[0][0] if c else None
 
 
-def pick_block(page, scope, name: str, branch: str, address: str = "") -> str:
-    """Block from the farmer's address, else from the branch name (Kadanagam -> Kadana)."""
+def master_location_key(value: str) -> str:
+    name = norm(value)
+    aliases = {
+        "LUNAWADA": "LUNAVADA",
+        "DOHAD": "DAHOD",
+        "DEVGADHBARIA": "DEVGADBARIA",
+        "DEVGADHBARIDA": "DEVGADBARIA",
+        "DEVGADBARIDA": "DEVGADBARIA",
+    }
+    return aliases.get(name, name)
+
+
+def master_location_option(value: str, options: list[str], column: str) -> str:
+    """Resolve an explicit master location to one portal option, without guessing."""
+    wanted = master_location_key(value)
+    matches = [o for o in options if master_location_key(o) == wanted]
+    if len(matches) != 1:
+        raise RuntimeError(f"{column} {value!r} is not a unique portal option")
+    return matches[0]
+
+
+def pick_block(page, scope, name: str, branch: str, address: str = "", taluka: str = "") -> str:
+    """Use the master's TALUKA when given; otherwise infer the block from address or branch."""
     wait_for(page, lambda: len(options_of(scope, name)) > 1, 10, f"{name} options")
     opts = options_of(scope, name)
-    blk = (block_from_address(address, opts) if address else None) or block_of(branch, opts) or usual_block(branch, opts)
+    if taluka:
+        blk = master_location_option(taluka, opts, "TALUKA")
+    else:
+        blk = (block_from_address(address, opts) if address else None) or block_of(branch, opts) or usual_block(branch, opts)
     if not blk:
         raise RuntimeError(f"no block for branch {branch!r}: the address names none of "
                            f"{', '.join(o for o in opts if o.lower() != 'select')[:120]}")
     select_label(scope, name, blk, page)
+    if taluka and master_location_key(form_values(scope, [name]).get(name, "")) != master_location_key(blk):
+        raise RuntimeError(f"portal taluka does not match master TALUKA {taluka!r}")
     return blk
 
 
 def find_location(page, village: str, branch: str, cands: list[tuple[str, bool]] | None = None,
-                  address: str = "", from_address: bool = False) -> str:
+                  address: str = "", from_address: bool = False, taluka: str = "") -> str:
     """Activity tab: 'Find Location?' -> the branch's block + village -> PROCEED. Returns the village picked."""
     page.locator("a", has_text=re.compile(r"Find Location", re.I)).first.click()
     m = page.locator(".modal-content:visible")
-    blk = pick_block(page, m, "landSubDistrictID", branch, address)
+    blk = pick_block(page, m, "landSubDistrictID", branch, address, taluka)
     if from_address:                                     # IS regular: village words from the address, not the block's name
         cands = address_candidates(address, f"{branch}|{blk}")
     wait_for(page, lambda: len(options_of(m, "landVillageID")) > 1, 10, "land villages")
@@ -697,7 +723,15 @@ def process_row(page, d: dict, stage: dict, mark_submitting):
     select_label(p1, "relation", "WIFE OF" if female else "SON OF", page)
     fill_text(page, p1.locator('input[name="relativeName"]').first, relative_name(d.get("RELATIVE NAME", ""), name))
     select_label(p1, "primaryActivity", activity, page)
-    block = pick_block(page, p1, "resSubDistrictId", d["Branch Name"], d.get("ADDRESS", ""))
+    if d.get("DISTRICT", "").strip():
+        wait_for(page, lambda: len(options_of(p1, "districtId")) > 1, 10, "district options")
+        district = master_location_option(d["DISTRICT"], options_of(p1, "districtId"), "DISTRICT")
+        select_label(p1, "districtId", district, page)
+        if master_location_key(form_values(p1, ["districtId"])["districtId"]) != master_location_key(district):
+            raise RuntimeError(f"portal district does not match master DISTRICT {d['DISTRICT']!r}")
+    block = pick_block(page, p1, "resSubDistrictId", d["Branch Name"], d.get("ADDRESS", ""), d.get("TALUKA", ""))
+    if d.get("TALUKA", "").strip() and master_location_key(form_values(p1, ["resSubDistrictId"])["resSubDistrictId"]) != master_location_key(block):
+        raise RuntimeError(f"portal taluka does not match master TALUKA {d['TALUKA']!r}")
     wait_for(page, lambda: len(options_of(p1, "resVillageId")) > 1, 10, "residence villages")
     v = match_village(village, options_of(p1, "resVillageId"))
     if not v:
@@ -796,7 +830,7 @@ def process_row(page, d: dict, stage: dict, mark_submitting):
         select_label(act, "liveStockCode", AH_ANIMAL, page)
         fill_text(page, act.locator('input[name="unitCount"]').first, AH_UNITS)
     try:
-        find_location(page, village, d["Branch Name"], address=d.get("ADDRESS", ""))
+        find_location(page, village, d["Branch Name"], address=d.get("ADDRESS", ""), taluka=d.get("TALUKA", ""))
     except VillageError:
         to_dashboard(page)
         return "VILLAGE_NOT_FOUND", "", f"land village {village!r} not (or not uniquely) in the portal list"

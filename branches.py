@@ -84,7 +84,8 @@ def read_master(path, required=None) -> list[dict]:
                 if best_missing is None or len(missing) < len(best_missing):
                     best_missing = missing
                 continue
-            rows = [{h: _cell(v) for h, v in zip(head, r) if h} for r in it if r and any(c not in (None, "") for c in r)]
+            rows = [{h: _cell(r[i] if i < len(r) else None) for i, h in enumerate(head) if h}
+                    for r in it if r and any(c not in (None, "") for c in r)]
             break
     finally:
         wb.close()

@@ -100,6 +100,9 @@ Opens http://localhost:8765 (this PC only; no farmer data leaves it).
 To run it on a free Oracle Cloud machine in India instead (laptop can stay off), see
 [deploy/oracle/ORACLE_SETUP.md](deploy/oracle/ORACLE_SETUP.md).
 1. **Master list**: upload the bank's pendency `.xlsx` (all branches; saved in `master/`). Every SOL is listed.
+   Optional `DISTRICT` and `TALUKA` columns at the end of the loan master override location guesses during entry.
+   Fill them with portal place names for each row; common spelling variants (Lunawada/Lunavada,
+   Dahod/Dohad, Devgadhbarida/Devgadbaria) are accepted. An unmatched filled value stops that row for review.
 2. **Build** a SOL → `branches/<SOL>/<SOL>.csv` = that SOL's master rows with Status **Pending** only (master Status
    kept as `MIS Status`), compared with that branch's own records in `branches/<SOL>/`: `<SOL>_progress.csv`,
    `reports/` (portal reports), `<SOL>_approvals.csv`. Rebuilding from a newer master keeps all progress.

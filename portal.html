@@ -833,7 +833,9 @@ const COLUMNS = {
     ["VILLAGE", "Fresh only", "Portal village name"],
     ["ADDRESS", "Fresh / empty activity", "AT KARODIYA PO SARASADI , TA KADANA , … — village found from it"],
     ["SURVEY NO", "Fresh / empty activity", "338"], ["KHATA NO", "Fresh / empty activity", "147"],
-    ["LAND", "Fresh / empty activity", "0.25 (land area)"]],
+    ["LAND", "Fresh / empty activity", "0.25 (land area)"],
+    ["DISTRICT", "no", "Portal district; filled value overrides address/default"],
+    ["TALUKA", "no", "Portal taluka; filled value overrides address"]],
   isclaim: [
     ["Sol ID", "yes", "3106 — one file can hold all branches"], ["Branch Name", "yes", "Kadanagam"],
     ["Account No.", "yes", "31060500000001 (Text)"], ["Cust id", "no", ""], ["Scheme Code", "no", "CC004 / CC043"],
@@ -846,7 +848,9 @@ const COLUMNS = {
     ["DP", "yes", "more than 0"], ["Int Sub Amt", "no", ""], ["Aadhaar No.", "yes", "12 digits (Text)"],
     ["DOB", "yes", "dd-mm-yyyy"], ["NAME AS PER ADHAR", "yes", ""], ["GENDER", "yes", "M / F"],
     ["RELATIVE NAME", "no", "blank → Aadhaar name"], ["MO NO", "no", "blank → 9876543210"], ["ADDRESS", "yes", ""],
-    ["VILLAGE", "yes", ""], ["SURVEY NO", "CC004", ""], ["KHATA NO", "CC004", ""], ["LAND", "CC004", "land area"]],
+    ["VILLAGE", "yes", ""], ["SURVEY NO", "CC004", ""], ["KHATA NO", "CC004", ""], ["LAND", "CC004", "land area"],
+    ["DISTRICT", "no", "Portal district; filled value overrides portal default"],
+    ["TALUKA", "no", "Portal taluka; filled value overrides address"]],
 };
 const SAMPLE_FILES = {
   regular: "is_regular_master_sample.xlsx", isclaim: "is_regular_claim_sample.xlsx",
