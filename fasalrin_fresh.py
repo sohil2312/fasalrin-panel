@@ -472,17 +472,20 @@ def block_of(branch: str, options: list[str]) -> str | None:
 def block_from_address(address: str, options: list[str]) -> str | None:
     """The block the farmer's address names: 'TA LUNAWADA' and the bank's 'VILLAGE,TALUKA,BLOCK,DISTRICT' part count
     most ('KANELA,LUNAWADA,LUNAWADA,PANCH MAHALS' -> Lunawada). A branch is not a block (Kidia farmers are in Lunawada)."""
+    # The bank writes Devgadbaria; the portal also spells it Devgadhbaria.
+    block_name = lambda value: norm(value).replace("DEVGADHBARIA", "DEVGADBARIA")
     opts = [o for o in options if o and o.strip().lower() != "select" and norm(o)]
     s = (address or "").upper()
     toks = re.findall(r"[A-Z]+", s)
     score = collections.Counter()
     for o in opts:
-        no = norm(o)
+        no = block_name(o)
         for i, t in enumerate(toks):
-            if t == no or (len(t) >= 5 and len(no) >= 5 and (t.startswith(no) or f.same_branch(t, o)) and abs(len(t) - len(no)) <= 3):
+            name = block_name(t)
+            if name == no or (len(name) >= 5 and len(no) >= 5 and (name.startswith(no) or f.same_branch(t, o)) and abs(len(name) - len(no)) <= 3):
                 score[o] += 3 if i and toks[i - 1] in ("TA", "TAL", "TALUKA", "TQ") else 1
         for part in s.split(","):                       # a whole comma part equal to the block name
-            if norm(part) == no:
+            if block_name(part) == no:
                 score[o] += 2
     if not score:
         return None
